@@ -5,6 +5,20 @@ y [Versionado Semantico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Changed
+
+- **El módulo exige Go 1.26.5** (`go 1.26.5` en `go.mod`). Es un cambio visible para el consumidor:
+  un proyecto con un toolchain anterior ya no puede compilarlo. La base del microecosistema se fijó
+  en 1.26.5 para todos los repos `identity-*`.
+- `parseJWKSKey` valida el punto de la clave con **`ecdsa.ParseUncompressedPublicKey`**, la API que
+  Go 1.26 pone en su sitio: en una sola llamada comprueba la codificación sin comprimir
+  (SEC 1 §2.3.3), que el punto caiga sobre P-256 y que no sea el punto al infinito. Sustituye al
+  rodeo por `crypto/ecdh` + construcción manual del `ecdsa.PublicKey`, que dejó de ser válido porque
+  **los campos `X` e `Y` quedaron deprecados en Go 1.26**. Mismo comportamiento observable, menos
+  superficie: desaparecen las dependencias de `crypto/ecdh` y `math/big`.
+- Los helpers de test leen las coordenadas de `PublicKey.Bytes()` en vez de `X`/`Y`, por lo mismo.
+
+
 ## [0.1.0]
 
 Primera version funcional de la cerrajeria. La **Ola 1 del Plan 001** fundio `wapp-shared/auth` y

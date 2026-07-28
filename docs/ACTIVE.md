@@ -10,14 +10,20 @@ subpaquetes `jwt/`, `rbac/` y `password/`, con 81 funciones de test (330 subtest
 de Go. Paridad **INV-3** verificada: 118 subtests golden de ambos fixtures (`edugo-shared/auth` y
 `wapp-shared/auth`), cero divergencias.
 
-Corrida autoritativa con el toolchain fijado, **Go 1.25.4 sobre el Mac** (la de la Ola 1 se hizo en
-un contenedor con Go 1.24.7 y un `replace` local de `x/crypto`): `gofmt -l` sin salida, `go vet` y
-`go build` limpios, `go test -short -race ./...` verde — `jwt` 1,66 s, `rbac` 1,49 s, `password`
-14,15 s, que es lo que cuesta bcrypt cost 12 — y golangci-lint **v2.4.0 (la del CI) con 0
-hallazgos**. El `go.sum` se generó con `go mod tidy` y red real; `go.mod` no cambió.
+El cierre de la ola cortó el tag **`auth/v0.1.0`** (tags modulares `<modulo>/vX.Y.Z`; este repo
+nunca corta un tag raíz), validado con Go 1.25.4 y golangci-lint v2.4.0, que era el toolchain de
+entonces.
 
-El cierre de la ola corta el tag **`auth/v0.1.0`** (tags modulares `<modulo>/vX.Y.Z`; este repo
-nunca corta un tag raíz).
+**Después, el ecosistema pasó a Go 1.26.5** (ver el `CHANGELOG.md` de la raíz y el del módulo).
+`main` va por delante del tag: exige `go 1.26.5`, usa `ecdsa.ParseUncompressedPublicKey` para
+validar las claves del JWKS —los campos `X`/`Y` del `ecdsa.PublicKey` quedaron deprecados en 1.26—
+y fija **golangci-lint v2.12.2**, porque la v2.4.0 se niega a analizar un módulo 1.26. Gates en
+verde con ese toolchain: `gofmt`, `vet`, `build`, `go test -short -race ./...` y el linter con 0
+hallazgos.
+
+**El próximo tag no puede ser un parche**: subir la directiva `go` rompe a cualquier consumidor con
+un toolchain anterior. Será `auth/v0.2.0`, y conviene que lleve dentro los
+[bugs 0001–0005](../../docs/bugs/README.md) del JWKS, hoy abiertos.
 
 **Lo siguiente es la Ola 2**, y es de `identity-infrastructure`, no de este repo. `identity-shared`
 queda estable hasta que un consumidor pida API nueva sobre `auth`.
