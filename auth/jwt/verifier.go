@@ -18,11 +18,17 @@ import (
 // ataques de confusión de algoritmo (identity ADR-0002).
 const signingAlg = "ES256"
 
-// clockLeeway es el margen de tolerancia de reloj aplicado a `exp`, `nbf` e `iat`.
+// clockLeeway es el margen de tolerancia de reloj aplicado a `exp` y `nbf`.
 //
 // Sin margen, una desviación de un segundo entre el reloj del emisor y el del verificador rechaza
 // tokens legítimos recién emitidos. El valor es deliberadamente pequeño: un margen generoso alarga
 // la vida útil real de un token revocado por expiración.
+//
+// `iat` NO se valida, a propósito: golang-jwt solo lo comprueba con WithIssuedAt, y esa comprobación
+// no aporta seguridad —`exp` y `nbf` ya acotan la ventana de uso, y el token va firmado, así que el
+// único que puede poner un `iat` raro es el propio emisor— mientras que sí añade un modo de fallo
+// real, el del emisor con el reloj adelantado más de clockLeeway. Quien use `iat` para medir
+// antigüedad de sesión debe saber que es un dato informativo del emisor, no una comprobación.
 const clockLeeway = 30 * time.Second
 
 // Verifier valida tokens del ecosistema identity contra una sola clave pública ECDSA P-256.
@@ -141,7 +147,13 @@ func (v *Verifier) ValidateServiceToken(tokenString, expectedAudience string) (*
 func (v *Verifier) parse(tokenString string, claims gojwt.Claims) error {
 	token, err := v.parser.ParseWithClaims(tokenString, claims, v.keyFunc)
 	if err != nil {
-		if errors.Is(err, gojwt.ErrTokenExpired) {
+		// El orden importa. golang-jwt acumula TODOS los fallos de claims en un solo error unido, así
+		// que un token que además de estar vencido viene de un emisor en el que no confiamos trae las
+		// dos causas dentro. Si se preguntara por la expiración primero, ese token se reportaría como
+		// «expirado» y el consumidor que mapea ErrTokenExpired a «pide un refresh» trataría como
+		// caducidad rutinaria justo el caso que hay que vigilar. Se clasifica por la causa más grave:
+		// la expiración solo gana cuando es el único problema.
+		if errors.Is(err, gojwt.ErrTokenExpired) && !hasNonExpiryDefect(err) {
 			return fmt.Errorf("%w: %w", auth.ErrTokenExpired, err)
 		}
 		return fmt.Errorf("%w: %w", auth.ErrInvalidToken, err)
@@ -150,6 +162,37 @@ func (v *Verifier) parse(tokenString string, claims gojwt.Claims) error {
 		return fmt.Errorf("%w: el token no superó la validación", auth.ErrInvalidToken)
 	}
 	return nil
+}
+
+// nonExpiryDefects son los fallos de validación que pesan más que una expiración: firma inválida,
+// emisor o audiencia equivocados, token aún no válido, claim obligatorio ausente y token
+// malformado o no verificable. Un token que arrastra cualquiera de ellos no es «un token bueno que
+// caducó», y no debe reportarse como tal.
+//
+// Deliberadamente NO incluye gojwt.ErrTokenInvalidClaims: ese es el paraguas bajo el que golang-jwt
+// mete todos los fallos de claims, la expiración incluida, así que meterlo aquí clasificaría como
+// inválido a cualquier token simplemente vencido.
+var nonExpiryDefects = []error{
+	gojwt.ErrTokenSignatureInvalid,
+	gojwt.ErrTokenInvalidIssuer,
+	gojwt.ErrTokenInvalidAudience,
+	gojwt.ErrTokenInvalidSubject,
+	gojwt.ErrTokenNotValidYet,
+	gojwt.ErrTokenRequiredClaimMissing,
+	gojwt.ErrTokenUnverifiable,
+	gojwt.ErrTokenMalformed,
+}
+
+// hasNonExpiryDefect reporta si el error del parser incluye alguna causa más grave que la
+// expiración. Se apoya en que golang-jwt une los fallos de claims con errors.Join, de modo que
+// errors.Is los encuentra todos dentro del error combinado.
+func hasNonExpiryDefect(err error) bool {
+	for _, defect := range nonExpiryDefects {
+		if errors.Is(err, defect) {
+			return true
+		}
+	}
+	return false
 }
 
 // keyFunc devuelve la clave con la que comprobar la firma, tras confirmar que el algoritmo declarado
