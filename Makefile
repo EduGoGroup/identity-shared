@@ -4,8 +4,8 @@
 MODULE_NAME = github.com/EduGoGroup/identity-shared
 
 # Versiones fijadas del toolchain de CI (deben coincidir con .github/workflows/ci.yml)
-GO_VERSION   := 1.25
-LINT_VERSION := v2.4.0
+GO_VERSION   := 1.26.5
+LINT_VERSION := v2.12.2
 
 MODULES := $(shell ./scripts/list-modules.sh --set all | tr '\n' ' ')
 INTEGRATION_MODULES := $(shell ./scripts/list-modules.sh --set integration | tr '\n' ' ')
@@ -129,7 +129,7 @@ check-all: fmt-all vet-all lint-all test-all build-all ## Validacion completa de
 .PHONY: tools
 tools: ## Instalar herramientas de CI (golangci-lint fijado a $(LINT_VERSION))
 	@echo "$(YELLOW)Instalando golangci-lint $(LINT_VERSION)...$(NC)"
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(LINT_VERSION)
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION)
 	@echo "$(GREEN)Herramientas instaladas$(NC)"
 
 .PHONY: ci-local

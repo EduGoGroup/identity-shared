@@ -44,7 +44,7 @@ Los comandos habituales, desde la raíz:
 ```bash
 make help        # lista los targets disponibles
 make ci-local    # fmt-check + vet + lint + tests (lo mismo que corre el CI)
-make ci-docker   # el mismo pipeline dentro del contenedor Go 1.25, sin gastar Actions
+make ci-docker   # el mismo pipeline dentro del contenedor Go 1.26.5, sin gastar Actions
 make test-all    # tests unitarios de todos los módulos
 ```
 
@@ -58,8 +58,8 @@ matriz del workflow de CI.
 
 | Pieza | Versión |
 | --- | --- |
-| Go | `1.25` (`go 1.25.0` en cada `go.mod`) |
-| golangci-lint | `v2.4.0` |
+| Go | `1.26.5` (`go 1.26.5` en cada `go.mod`) |
+| golangci-lint | `v2.12.2` |
 
 ## El Identity Token
 
