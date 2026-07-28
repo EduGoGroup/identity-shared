@@ -476,3 +476,69 @@ func TestVerifier_RejectsMalformedToken(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifier_ExpiredTokenFromUntrustedIssuerIsInvalid: golang-jwt acumula todos los fallos de
+// claims en un error unido, así que un token puede venir a la vez vencido y de un emisor en el que
+// no confiamos. Clasificarlo como «expirado» es peligroso en el consumidor: el middleware que mapea
+// ErrTokenExpired a «pide un refresh» trataría como caducidad rutinaria justo el caso que hay que
+// mirar con lupa. Gana siempre la causa más grave.
+func TestVerifier_ExpiredTokenFromUntrustedIssuerIsInvalid(t *testing.T) {
+	t.Parallel()
+	_, verifier, key := newVerifierPair(t)
+
+	past := time.Now().Add(-2 * time.Hour)
+	claims := validIdentityClaims()
+	claims.Issuer = "emisor-en-el-que-no-confiamos"
+	claims.IssuedAt = gojwt.NewNumericDate(past)
+	claims.NotBefore = gojwt.NewNumericDate(past)
+	claims.ExpiresAt = gojwt.NewNumericDate(past.Add(time.Minute))
+	token := signCustom(t, gojwt.SigningMethodES256, key, testKid, claims)
+
+	got, err := verifier.ValidateIdentityToken(token, testSystem)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, auth.ErrInvalidToken,
+		"un emisor no confiable pesa más que una expiración, aunque el token traiga las dos cosas")
+	assert.NotErrorIs(t, err, auth.ErrTokenExpired,
+		"reportarlo como caducidad rutinaria escondería el problema de verdad")
+}
+
+// TestVerifier_ExpiredButOtherwiseValidTokenIsExpired es la contraparte del anterior: cuando la
+// expiración es el ÚNICO defecto, el veredicto sigue siendo ErrTokenExpired. Sin este test, endurecer
+// la clasificación podría acabar marcando como inválido cualquier token simplemente caducado, que es
+// el caso rutinario y el que dispara el refresh.
+func TestVerifier_ExpiredButOtherwiseValidTokenIsExpired(t *testing.T) {
+	t.Parallel()
+	_, verifier, key := newVerifierPair(t)
+
+	past := time.Now().Add(-2 * time.Hour)
+	claims := validIdentityClaims()
+	claims.IssuedAt = gojwt.NewNumericDate(past)
+	claims.NotBefore = gojwt.NewNumericDate(past)
+	claims.ExpiresAt = gojwt.NewNumericDate(past.Add(time.Minute))
+	token := signCustom(t, gojwt.SigningMethodES256, key, testKid, claims)
+
+	got, err := verifier.ValidateIdentityToken(token, testSystem)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, auth.ErrTokenExpired)
+	assert.NotErrorIs(t, err, auth.ErrInvalidToken)
+}
+
+// TestVerifier_DoesNotValidateIssuedAt fija por test una decisión, no un descuido: `iat` no se
+// comprueba. Validarlo (gojwt.WithIssuedAt) no aporta seguridad —`exp` y `nbf` ya acotan la ventana
+// de uso, y el token va firmado, así que solo el emisor podría poner un `iat` raro— y sí añade un
+// modo de fallo real: el emisor con el reloj adelantado más de clockLeeway dejaría de funcionar.
+//
+// Lo que este test protege es la honestidad del contrato: si algún día se decide validar `iat`, que
+// sea un cambio consciente y documentado, no un efecto colateral.
+func TestVerifier_DoesNotValidateIssuedAt(t *testing.T) {
+	t.Parallel()
+	_, verifier, key := newVerifierPair(t)
+
+	claims := validIdentityClaims()
+	claims.IssuedAt = gojwt.NewNumericDate(time.Now().AddDate(10, 0, 0))
+	token := signCustom(t, gojwt.SigningMethodES256, key, testKid, claims)
+
+	got, err := verifier.ValidateIdentityToken(token, testSystem)
+	require.NoError(t, err, "iat es un dato informativo del emisor, no una comprobación del verificador")
+	assert.Equal(t, testSystem, got.System)
+}

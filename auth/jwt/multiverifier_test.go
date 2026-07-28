@@ -211,9 +211,14 @@ func TestMultiVerifier_RejectsEmptyExpectedArguments(t *testing.T) {
 	assert.ErrorIs(t, err, auth.ErrInvalidInput)
 }
 
-// TestMultiVerifier_ConcurrentUse ejercita el verificador desde varias goroutines a la vez. Con -race
-// activo, es la prueba de que el mapa de claves está bien protegido: el modo JWKS lo reemplaza en
-// caliente mientras otras goroutines lo leen.
+// TestMultiVerifier_ConcurrentUse ejercita el verificador **en modo estático** desde varias
+// goroutines a la vez: aquí el mapa de claves se escribe una sola vez, en el constructor, y a partir
+// de ahí solo se lee.
+//
+// El caso que de verdad importa —el reemplazo del mapa en caliente— NO se prueba aquí, porque en
+// este modo no ocurre nunca: está en TestMultiVerifierFromJWKS_ConcurrentRotation, que rota las
+// claves del emisor mientras otras goroutines validan. Antes este comentario afirmaba cubrirlo y no
+// lo hacía, así que su `-race` verde no decía nada de fetchAndSwap.
 func TestMultiVerifier_ConcurrentUse(t *testing.T) {
 	t.Parallel()
 

@@ -20,10 +20,15 @@ import (
 //
 // Ese fixture es un contrato cross-language entre tres implementaciones del mismo algoritmo: este
 // matcher Go, la función iam.permission_matches() de Postgres y el PermissionMatcher Kotlin del
-// cliente KMP. El fixture maestro vive en
-// EduUI/edugo-ui-kmp/e2e-integration-plan/permissions-redesign-spec/fixtures/permission_matcher_golden.json
-// y todas las copias deben coincidir BYTE A BYTE con él; si no coinciden, el contrato deja de estar
-// verificado y las tres implementaciones pueden divergir en silencio.
+// cliente KMP. Todas las copias deben coincidir BYTE A BYTE con el maestro; si no coinciden, el
+// contrato deja de estar verificado y las tres implementaciones pueden divergir en silencio.
+//
+// La forma fiable de comprobarlo es el hash, no la ruta: el maestro ya se movió una vez.
+//
+//	sha256 = c63c299777524f9a110e861f8ae1ff457d650c68ce657d8291083553574a76c6
+//
+// A 2026-07-27 vive en el repo de EduGo, en
+// EduUI/edugo-ui-kmp/docs/archive/e2e-integration-plan/permissions-redesign-spec/fixtures/permission_matcher_golden.json
 //
 // Por eso el fixture conserva cadenas que nombran recursos del dominio de negocio de EduGo, ajenos
 // por completo a este módulo, algo que sería inaceptable en cualquier otro archivo de este paquete.
