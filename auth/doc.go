@@ -17,18 +17,31 @@
 //     parent_role_id.
 //   - Hashing de contraseñas con bcrypt cost 12.
 //
-// # Estado
+// # Organización
 //
-// Este paquete es todavía la carcasa del módulo (Ola 0 del Plan 001): declara el propósito y fija
-// el module path, pero no expone API. Los subpaquetes jwt, rbac y password los crea la Ola 1
-// (tareas T1.2 a T1.6), y con ellos llegan las dependencias del go.mod, hoy vacío.
+// El paquete raíz auth no tiene lógica: expone únicamente el conjunto canónico de errores
+// centinela que los tres subpaquetes envuelven. Así errors.Is funciona igual sin importar de qué
+// subpaquete venga el error — defecto que arrastraban los dos shared originales, donde cada
+// subpaquete declaraba su propio ErrInvalidInput con un mensaje distinto.
 //
-// La Ola 1 funde, no escribe desde cero: la base canónica es wapp-shared/auth/jwt, a la que se le
-// suman el matcher glob con los golden tests de edugo-shared/auth/permission_matcher, la herencia
-// parent_role_id, bcrypt cost 12 y el soporte JWKS del MultiVerifier — esta última, la única pieza
-// que se diseña en vez de portarse. Rige la invariante INV-3: los tests deben incluir los casos
-// golden de ambos shared originales, y una divergencia de resultado es un bug, no un
-// comportamiento nuevo.
+//   - jwt — emisión y verificación de tokens, MultiVerifier con JWKS, refresh opaco.
+//   - rbac — matcher glob, evaluación de grants y cadena de herencia de roles.
+//   - password — hashing y verificación con bcrypt.
+//
+// # Procedencia
+//
+// La Ola 1 del Plan 001 fundió, no escribió desde cero: la base canónica es wapp-shared/auth/jwt,
+// a la que se le sumaron el matcher glob con los golden tests de edugo-shared/auth y su cadena de
+// herencia de roles, bcrypt cost 12 y el soporte JWKS del MultiVerifier — esta última, la única
+// pieza diseñada en vez de portada. Rige la invariante INV-3: los tests incluyen los casos golden
+// de ambos shared originales, y una divergencia de resultado es un bug, no un comportamiento
+// nuevo.
+//
+// Divergencias deliberadas respecto a los originales, todas por mandato de un ADR de identity:
+// el algoritmo de firma es ES256 con kid obligatorio y HS256 no existe ni para tokens de servicio
+// (ADR-0002 y ADR-0012); el refresh token lleva prefijo legible rft_ y su SHA-256 se calcula sobre
+// la cadena completa, prefijo incluido (ADR-0003); y no hay verificador «default» para tokens sin
+// kid, porque en identity no existe legado que verificar.
 //
 // # Identity Token
 //
