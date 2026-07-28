@@ -21,12 +21,19 @@ y fija **golangci-lint v2.12.2**, porque la v2.4.0 se niega a analizar un módul
 verde con ese toolchain: `gofmt`, `vet`, `build`, `go test -short -race ./...` y el linter con 0
 hallazgos.
 
-**El próximo tag no puede ser un parche**: subir la directiva `go` rompe a cualquier consumidor con
-un toolchain anterior. Será `auth/v0.2.0`, y conviene que lleve dentro los
-[bugs 0001–0005](../../docs/bugs/README.md) del JWKS, hoy abiertos.
+**`auth/v0.2.0` publicado** con las dos cosas dentro: el salto de toolchain y el endurecimiento del
+JWKS. Cierra los [bugs 0001–0005](../../docs/bugs/README.md), los cinco que encontró la revisión
+adversarial de la 0.1.0 — single-flight que se perdía al fallar el emisor, cooldown que un tercero
+podía quemar, `http://` aceptado fuera de loopback, clasificación de errores que escondía la causa
+grave y dos promesas de test que no se sostenían. Es minor y no parche por dos motivos
+independientes: exige Go 1.26.5 y `http://` remoto deja de ser configuración válida.
 
-**Lo siguiente es la Ola 2**, y es de `identity-infrastructure`, no de este repo. `identity-shared`
-queda estable hasta que un consumidor pida API nueva sobre `auth`.
+342 subtests en verde (12 nuevos), linter con 0 hallazgos, y cada arreglo con un test que se
+comprobó que **falla** con el código anterior.
+
+**Este repo queda estable** hasta que un consumidor pida API nueva sobre `auth`.
+
+**Lo siguiente es la Ola 2**, y es de `identity-infrastructure`, no de este repo.
 
 Rige **INV-1**: aquí no entra ningún concepto de negocio de los ecosistemas, ni en código, ni en
 tests, ni en ejemplos.
