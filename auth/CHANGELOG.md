@@ -5,8 +5,56 @@ y [Versionado Semantico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.2.0]
+
+Endurecimiento del JWKS y salto de toolchain. La 0.1.0 dejó la cerrajería funcionando; esta versión
+cierra los cinco defectos que encontró la revisión adversarial posterior —ninguno era un fail-open,
+todos estaban en la única pieza que se diseñó desde cero en vez de portarse— y sube la base a Go
+1.26.5.
+
+**Cambio incompatible:** exige Go 1.26.5. Un proyecto con un toolchain anterior ya no compila este
+módulo. Por eso es una minor y no un parche.
+
+### Fixed
+
+- **El refresco del JWKS ya no pierde el single-flight cuando el emisor falla** (bug 0001). Antes,
+  `fetchAndSwap` solo movía `fetchedAt` en caso de éxito, así que cada goroutine que ganaba el
+  candado volvía a ver la caché vencida y volvía a pedir: el candado no colapsaba la estampida, la
+  **serializaba**. Con un emisor colgado, 20 validaciones concurrentes eran 20 peticiones y la
+  última esperaba 20 timeouts. Ahora el fallo se recuerda durante `failureBackoff` (3 s) y se
+  comparte con quien llegue en esa ventana: **una petición**, y las demás fallan en microsegundos.
+  La postura sigue siendo fail-closed; lo que cambia es que rechazar sale barato.
+- **Un `kid` inventado ya no bloquea la absorción de una rotación legítima** (bug 0002). El
+  limitador de refetch fuera de ciclo era un turno único por ventana y global: bastaba un token con
+  `kid` basura para que la clave nueva de verdad se quedara fuera hasta que expirara el `CacheTTL`.
+  Ahora son dos piezas: memoria por `kid` dentro de la ventana —repetir el mismo `kid` inexistente
+  no vuelve a molestar al emisor, así que machacar con él cuesta cero— y un presupuesto de
+  `maxOutOfCycleRefetches` (5) por ventana en lugar de uno, que deja pasar al `kid` nuevo sin abrir
+  la puerta a una tormenta de refetch.
+- **El JWKS por `http://` solo se acepta contra loopback** (bug 0003). Antes cualquier host valía y
+  la documentación lo listaba sin advertencia. Es el único punto sobre el que descansa el ADR-0002:
+  quien sirva ese documento sustituye el conjunto de claves entero y forja tokens que todos los
+  consumidores aceptan; ni el `kid` obligatorio ni la comprobación del punto sobre la curva ayudan,
+  porque los pone el atacante. `localhost`, 127.0.0.0/8 y ::1 siguen valiendo para desarrollo.
+- **La clasificación de errores ya no pierde el motivo más grave** (bug 0004). golang-jwt une todos
+  los fallos de claims en un solo error, y se preguntaba primero por la expiración: un token de un
+  emisor no confiable **que además** estaba vencido se reportaba como «expirado», de modo que un
+  middleware que mapea `ErrTokenExpired` a «pide un refresh» trataba como caducidad rutinaria justo
+  el caso que hay que vigilar. Ahora gana la causa más grave y la expiración solo se reporta cuando
+  es el único defecto.
+- **`TestMultiVerifier_ConcurrentUse` ya no promete lo que no cubre** (bug 0005). Decía ejercitar el
+  reemplazo del mapa de claves en caliente y construía el verificador en modo estático, donde eso no
+  ocurre nunca. El caso real está ahora en `TestMultiVerifierFromJWKS_ConcurrentRotation`, que rota
+  las claves del emisor mientras otras goroutines validan.
+
 ### Changed
 
+- **`iat` no se valida, y ahora lo dice** (bug 0004). El comentario de `clockLeeway` afirmaba cubrir
+  `exp`, `nbf` e `iat`, pero faltaba `gojwt.WithIssuedAt` y un `iat` a diez años en el futuro se
+  aceptaba. Se corrige la documentación en vez de añadir la comprobación, y la decisión queda fijada
+  por test: validar `iat` no aporta seguridad —`exp` y `nbf` ya acotan la ventana, y el token va
+  firmado, así que solo el emisor podría falsearlo— y sí añade un modo de fallo real, el del emisor
+  con el reloj adelantado.
 - **El módulo exige Go 1.26.5** (`go 1.26.5` en `go.mod`). Es un cambio visible para el consumidor:
   un proyecto con un toolchain anterior ya no puede compilarlo. La base del microecosistema se fijó
   en 1.26.5 para todos los repos `identity-*`.
