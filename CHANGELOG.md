@@ -29,3 +29,8 @@ linter, `Makefile` raíz, scripts y workflows.
 - Módulo `auth`: `go.mod` (`github.com/EduGoGroup/identity-shared/auth`, `go 1.25.0`, todavía sin
   dependencias), `doc.go`, `README.md`, `CHANGELOG.md` y `Makefile`. Los subpaquetes `jwt/`, `rbac/`
   y `password/` los crea la Ola 1 (T1.2–T1.6).
+- Cierre de la **Ola 1**: el módulo `auth` pasó de carcasa a funcional (subpaquetes `jwt/`, `rbac/`
+  y `password/`) y cortó su primer release, `auth/v0.1.0`. Detalle de la API en `auth/CHANGELOG.md`,
+  no aquí.
+- La matriz `prepare-modules` + `validate` del workflow `ci.yml` ya valida código real de los tres
+  subpaquetes, no solo el esqueleto del módulo.
