@@ -91,11 +91,18 @@ type jwksServer struct {
 func newJWKSServer(t *testing.T, body []byte) *jwksServer {
 	t.Helper()
 	js := &jwksServer{body: body, status: http.StatusOK}
-	js.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	js.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		js.hits.Add(1)
 
 		if delay := js.delayNanos.Load(); delay > 0 {
-			time.Sleep(time.Duration(delay))
+			// La espera se abandona si el cliente se rinde: sin esto, el Close del servidor al final
+			// del test se queda esperando al handler dormido y cada test de cuelgue cuesta el delay
+			// entero en tiempo de suite.
+			select {
+			case <-time.After(time.Duration(delay)):
+			case <-r.Context().Done():
+				return
+			}
 		}
 
 		js.mu.Lock()
@@ -484,7 +491,11 @@ func TestMultiVerifierFromJWKS_SharesOneRequestWhenIssuerHangs(t *testing.T) {
 	manager, public := newSigner(t, kidPrimary)
 	server := newJWKSServer(t, jwksBody(t, ecEntry(kidPrimary, public)))
 
-	const clientTimeout = 150 * time.Millisecond
+	// El timeout es holgado a propósito. El aserto que prueba el arreglo es el CONTADOR de peticiones,
+	// que no depende del reloj; el de tiempo solo distingue «una espera» de «veinte encadenadas», y
+	// para eso no hace falta apurar. Con un plazo corto, el primer fetch —el del constructor, que aún
+	// no tiene delay— puede pasarse en un runner de CI cargado y tumbar el test por donde no es.
+	const clientTimeout = time.Second
 	mv, err := jwt.NewMultiVerifierFromJWKS(testIssuer, jwt.JWKSOptions{
 		URL:        server.url(),
 		CacheTTL:   20 * time.Millisecond,
@@ -495,7 +506,7 @@ func TestMultiVerifierFromJWKS_SharesOneRequestWhenIssuerHangs(t *testing.T) {
 	token := newIdentityToken(t, manager)
 	hitsTrasConstructor := server.hits.Load()
 
-	server.setDelay(2 * time.Second)
+	server.setDelay(10 * time.Second) // más que el timeout del cliente: el emisor no responde nunca
 	time.Sleep(30 * time.Millisecond) // vence la caché
 
 	const validaciones = 20
