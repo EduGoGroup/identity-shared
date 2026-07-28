@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -28,15 +29,33 @@ type jwksEntry map[string]any
 
 // ecEntry construye una entrada JWKS válida para una clave pública P-256.
 func ecEntry(kid string, publicKey *ecdsa.PublicKey) jwksEntry {
+	x, y := pointCoordinates(publicKey)
 	return jwksEntry{
 		"kty": "EC",
 		"crv": "P-256",
 		"kid": kid,
 		"use": "sig",
 		"alg": "ES256",
-		"x":   coordinate(publicKey.X.FillBytes(make([]byte, coordinateBytes))),
-		"y":   coordinate(publicKey.Y.FillBytes(make([]byte, coordinateBytes))),
+		"x":   coordinate(x),
+		"y":   coordinate(y),
 	}
+}
+
+// pointCoordinates devuelve las coordenadas X e Y de una clave pública en octetos de longitud fija,
+// que es la forma que exige RFC 7518 §6.2.1.2.
+//
+// Se leen del punto sin comprimir que expone PublicKey.Bytes (SEC 1 §2.3.3: 0x04 || X || Y) porque
+// los campos X e Y del ecdsa.PublicKey quedaron deprecados en Go 1.26.
+//
+// Entra en pánico si la clave no es válida: esto es un helper de test y una clave inválida aquí es
+// un error del propio test, no un caso que haya que cubrir.
+func pointCoordinates(publicKey *ecdsa.PublicKey) (x, y []byte) {
+	point, err := publicKey.Bytes()
+	if err != nil {
+		panic(fmt.Sprintf("clave pública de test inválida: %v", err))
+	}
+	half := (len(point) - 1) / 2
+	return point[1 : 1+half], point[1+half:]
 }
 
 // coordinate codifica una coordenada como base64url SIN padding, que es lo que exige RFC 7517.
@@ -142,12 +161,13 @@ func TestNewMultiVerifierFromJWKS_IgnoresUnusableEntries(t *testing.T) {
 		"n":   "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
 		"e":   "AQAB",
 	}
+	otherX, otherY := pointCoordinates(otherPublic)
 	wrongCurve := jwksEntry{
 		"kty": "EC",
 		"crv": "P-384",
 		"kid": "ec-p384",
-		"x":   coordinate(otherPublic.X.FillBytes(make([]byte, coordinateBytes))),
-		"y":   coordinate(otherPublic.Y.FillBytes(make([]byte, coordinateBytes))),
+		"x":   coordinate(otherX),
+		"y":   coordinate(otherY),
 	}
 	wrongAlg := ecEntry("ec-rs256", otherPublic)
 	wrongAlg["alg"] = "RS256"
@@ -157,7 +177,7 @@ func TestNewMultiVerifierFromJWKS_IgnoresUnusableEntries(t *testing.T) {
 	badCoordinate := ecEntry("ec-x-corta", otherPublic)
 	badCoordinate["x"] = coordinate([]byte{0x01, 0x02, 0x03})
 	paddedCoordinate := ecEntry("ec-x-con-padding", otherPublic)
-	paddedCoordinate["x"] = base64.URLEncoding.EncodeToString(otherPublic.X.FillBytes(make([]byte, coordinateBytes))) + "=="
+	paddedCoordinate["x"] = base64.URLEncoding.EncodeToString(otherX) + "=="
 
 	server := newJWKSServer(t, jwksBody(t,
 		rsa, wrongCurve, wrongAlg, encryptionUse, withoutKid, badCoordinate, paddedCoordinate,
