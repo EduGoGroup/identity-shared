@@ -46,9 +46,9 @@ su propio `Makefile`.
 
 - Raíz: `make help` · `make build-all` · `make test-all` · `make lint-all` · `make ci-local` (fmt-check
   + vet + lint + tests, lo que corre el CI) · `make ci-docker` (mismo pipeline dentro del contenedor
-  `golang:1.25` con `golangci-lint v2.4.0`, para reproducir el CI sin gastar minutos de Actions).
+  `golang:1.26.5` con `golangci-lint v2.12.2`, para reproducir el CI sin gastar minutos de Actions).
 - Por módulo: `make -C auth test` / `lint` / `fmt` / `vet` / `release-check`.
-- Toolchain fijado: **Go 1.25** (`go 1.25.0` en cada `go.mod`), **golangci-lint v2.4.0**. Las variables
+- Toolchain fijado: **Go 1.26.5** (`go 1.26.5` en cada `go.mod`), **golangci-lint v2.12.2**. Las variables
   `GO_VERSION` / `LINT_VERSION` del `Makefile` raíz deben coincidir con `.github/workflows/ci.yml`.
 
 ## La fusión que ejecuta la Ola 1 (léelo antes de escribir código aquí)

@@ -10,6 +10,17 @@ linter, `Makefile` raíz, scripts y workflows.
 
 ## [Unreleased]
 
+### Changed
+
+- **El ecosistema pasa a Go 1.26.5 como base** (`go 1.26.5` en cada `go.mod`, `GO_VERSION` de los
+  workflows y `golang:1.26.5-bookworm` en `ci-docker`). Va con **golangci-lint v2.12.2**, y no es
+  opcional: la v2.4.0 anterior se niega a arrancar contra un módulo 1.26 con «the Go language
+  version (go1.25) used to build golangci-lint is lower than the targeted Go version». De paso se
+  actualizan las actions que ya avisaban de la deprecación de Node 20 —`actions/checkout@v5`,
+  `actions/setup-go@v6`, `golangci/golangci-lint-action@v9`— y se corrige el `go install` del target
+  `tools`, que apuntaba al import path de la v1 (`golangci-lint/cmd/…` en vez de
+  `golangci-lint/v2/cmd/…`) y por tanto nunca habría instalado la versión fijada.
+
 ### Added
 
 - Esqueleto del repositorio creado por el **Plan 001** (Ola 0): estándar de proyecto del grupo
@@ -17,7 +28,7 @@ linter, `Makefile` raíz, scripts y workflows.
 - `AGENTS.md` (fuente única local, con la estrategia de fusión de la Ola 1 y la invariante INV-3),
   `CLAUDE.md`, `GEMINI.md`, `README.md` y `CHANGELOG.md`.
 - `Makefile` raíz multi-módulo con targets autodocumentados, `ci-local` y `ci-docker`; toolchain
-  fijado a Go 1.25 y golangci-lint v2.4.0.
+  fijado a Go 1.26.5 y golangci-lint v2.12.2.
 - `.golangci.yml` (`version: "2"`) y `.gitignore` de proyecto Go.
 - `docs/ACTIVE.md` con el norte del proyecto.
 - `scripts/list-modules.sh`: descubre los módulos con `find . -mindepth 2 -maxdepth 2 -name go.mod`
@@ -26,7 +37,7 @@ linter, `Makefile` raíz, scripts y workflows.
 - Workflows `ci.yml` (matriz `prepare-modules` + `validate` + `integration`), `release.yml` (tags
   modulares `<modulo>/v*`) y `sync-main-to-dev.yml`, con `GOPRIVATE` y credencial de `git` para
   dependencias privadas de la organización.
-- Módulo `auth`: `go.mod` (`github.com/EduGoGroup/identity-shared/auth`, `go 1.25.0`, todavía sin
+- Módulo `auth`: `go.mod` (`github.com/EduGoGroup/identity-shared/auth`, `go 1.26.5`, todavía sin
   dependencias), `doc.go`, `README.md`, `CHANGELOG.md` y `Makefile`. Los subpaquetes `jwt/`, `rbac/`
   y `password/` los crea la Ola 1 (T1.2–T1.6).
 - Cierre de la **Ola 1**: el módulo `auth` pasó de carcasa a funcional (subpaquetes `jwt/`, `rbac/`

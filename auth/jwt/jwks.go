@@ -2,14 +2,12 @@ package jwt
 
 import (
 	"context"
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"net/url"
 	"sync"
@@ -363,28 +361,25 @@ func parseJWKSKey(entry *jwksKey) (*ecdsa.PublicKey, bool) {
 		return nil, false
 	}
 
-	// La comprobación se delega en crypto/ecdh: NewPublicKey exige el formato sin comprimir de
-	// SEC 1 §2.3.3 (0x04 || X || Y), verifica que el punto caiga sobre P-256 y además rechaza el
-	// punto al infinito. La vía clásica (elliptic.Curve.IsOnCurve) está deprecada desde Go 1.21 por
-	// ser una API de bajo nivel insegura, y no descarta el punto al infinito.
+	// El punto se rearma en formato sin comprimir (SEC 1 §2.3.3: 0x04 || X || Y) y se delega en
+	// ecdsa.ParseUncompressedPublicKey, que en una sola llamada comprueba la codificación, que el
+	// punto caiga sobre P-256 y que no sea el punto al infinito. Es la API que Go 1.26 pone en su
+	// sitio: construir el ecdsa.PublicKey a mano quedó deprecado, y la vía clásica
+	// (elliptic.Curve.IsOnCurve) lo estaba desde Go 1.21 por ser de bajo nivel y aceptar el infinito.
 	point := make([]byte, 0, 1+2*p256CoordinateBytes)
 	point = append(point, uncompressedPointPrefix)
 	point = append(point, x...)
 	point = append(point, y...)
-	if _, err := ecdh.P256().NewPublicKey(point); err != nil {
+	publicKey, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
+	if err != nil {
 		return nil, false
 	}
-
-	return &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(x),
-		Y:     new(big.Int).SetBytes(y),
-	}, true
+	return publicKey, true
 }
 
 // decodeCoordinate decodifica una coordenada de un JWK EC: base64url sin padding y exactamente
 // p256CoordinateBytes bytes (RFC 7518 §6.2.1.2). Devuelve los octetos tal cual, sin normalizar, para
-// poder rearmar el punto sin comprimir que espera crypto/ecdh.
+// poder rearmar el punto sin comprimir.
 func decodeCoordinate(encoded string) ([]byte, bool) {
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || len(raw) != p256CoordinateBytes {
