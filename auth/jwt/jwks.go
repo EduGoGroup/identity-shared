@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +30,17 @@ const (
 	// defaultJWKSHTTPTimeout es el timeout del cliente HTTP que se construye cuando el consumidor no
 	// aporta uno. Un cliente sin timeout puede colgar la verificación indefinidamente.
 	defaultJWKSHTTPTimeout = 10 * time.Second
+
+	// failureBackoff es lo que se espera antes de volver a llamar a un emisor que acaba de fallar.
+	// Durante esa ventana, las validaciones que necesitan claves frescas reciben el error del último
+	// intento sin generar tráfico nuevo. Es corto a propósito: alargarlo prolongaría la caída más allá
+	// de lo que dura el problema del emisor.
+	failureBackoff = 3 * time.Second
+
+	// maxOutOfCycleRefetches es el presupuesto de refetches por `kid` desconocido dentro de una
+	// ventana de RefetchCooldown. No es uno: con un solo turno por ventana, cualquiera que presente un
+	// `kid` inventado deja sin refetch a la rotación de clave legítima que venga detrás.
+	maxOutOfCycleRefetches = 5
 
 	// maxJWKSBodyBytes acota lo que se lee del endpoint. El JWKS de un emisor sano pesa menos de un
 	// kilobyte; el límite existe para que un endpoint comprometido o roto no pueda agotar la memoria
@@ -49,9 +62,10 @@ const (
 
 // JWKSOptions configura de dónde y cada cuánto se obtiene el conjunto de claves públicas del emisor.
 //
-// URL es obligatoria y debe ser absoluta con esquema http o https. El resto tiene valores por
-// defecto: HTTPClient nil usa un cliente propio con timeout de 10 s, CacheTTL <= 0 usa 15 minutos y
-// RefetchCooldown <= 0 usa 1 minuto.
+// URL es obligatoria y debe ser absoluta. El esquema debe ser https, salvo contra loopback
+// (`localhost`, 127.0.0.0/8, ::1), donde también vale http para desarrollo. El resto tiene valores
+// por defecto: HTTPClient nil usa un cliente propio con timeout de 10 s, CacheTTL <= 0 usa 15
+// minutos y RefetchCooldown <= 0 usa 1 minuto.
 //
 // Si aportas tu propio HTTPClient, dale un Timeout: la verificación se hace en línea con la petición
 // que la necesita, y un cliente sin plazo la deja colgada.
@@ -62,12 +76,12 @@ type JWKSOptions struct {
 	RefetchCooldown time.Duration
 }
 
-// jwksState es el estado mutable del modo JWKS de un MultiVerifier: la configuración resuelta más los
-// instantes que gobiernan la política de refresco.
+// jwksState es el estado mutable del modo JWKS de un MultiVerifier: la configuración resuelta más lo
+// que gobierna la política de refresco.
 //
-// fetchedAt y lastOutOfCycle se leen y escriben bajo el mutex del MultiVerifier. fetchMu es un candado
-// aparte que serializa la petición HTTP en sí, para que N validaciones concurrentes con la caché
-// vencida produzcan una sola petición al emisor y no N.
+// Todos los campos salvo fetchMu se leen y escriben bajo el mutex del MultiVerifier. fetchMu es un
+// candado aparte que serializa la petición HTTP en sí, para que N validaciones concurrentes con la
+// caché vencida produzcan una sola petición al emisor y no N.
 type jwksState struct {
 	url             string
 	client          *http.Client
@@ -76,8 +90,20 @@ type jwksState struct {
 
 	fetchMu sync.Mutex
 
-	fetchedAt      time.Time
-	lastOutOfCycle time.Time
+	// fetchedAt es el instante del último fetch CON ÉXITO: es lo que decide si la caché está vigente.
+	fetchedAt time.Time
+
+	// lastFailure y lastErr recuerdan el último intento fallido. Sin ellos, un emisor caído hace que
+	// cada validación reintente por su cuenta: el fetchMu las pone en fila, pero no las colapsa, y N
+	// validaciones acaban siendo N peticiones en serie contra un emisor que ya está en problemas.
+	lastFailure time.Time
+	lastErr     error
+
+	// windowStart y outOfCycleCount son el presupuesto de refetches fuera de ciclo de la ventana en
+	// curso; unknownKids recuerda por qué `kid` ya preguntamos dentro de ella.
+	windowStart     time.Time
+	outOfCycleCount int
+	unknownKids     map[string]struct{}
 }
 
 // NewMultiVerifierFromJWKS construye un MultiVerifier que toma sus claves públicas de un endpoint
@@ -92,14 +118,18 @@ type jwksState struct {
 //   - Si la caché está vencida (edad > CacheTTL), se refresca ANTES de verificar. Si ese refresco
 //     falla, la validación devuelve un error que envuelve auth.ErrJWKSUnavailable. No se sirve caché
 //     vencida: preferimos rechazar un token bueno a aceptar uno firmado con una clave ya retirada.
+//     Un fallo se recuerda durante unos segundos y se comparte con las validaciones que lleguen
+//     mientras tanto, de modo que un emisor caído recibe una petición y no una por validación.
 //   - Si el `kid` del token no está en una caché vigente, se intenta un refetch fuera de ciclo para
-//     absorber una rotación de claves sin downtime, limitado a uno cada RefetchCooldown. Si el `kid`
-//     sigue ausente después, la validación devuelve auth.ErrUnknownKid.
+//     absorber una rotación de claves sin downtime. Está limitado por ventana de RefetchCooldown, y
+//     dentro de la ventana no se repite la consulta por un `kid` que ya resultó desconocido. Si el
+//     `kid` sigue ausente después, la validación devuelve auth.ErrUnknownKid.
 //   - Del documento JWKS solo se aceptan claves EC P-256 utilizables para firma. El resto se descarta
 //     en silencio; si no queda ninguna, el resultado es auth.ErrJWKSUnavailable.
 //
-// Devuelve un error que envuelve auth.ErrInvalidInput si el issuer está vacío o la URL falta o no es
-// absoluta http/https, y auth.ErrJWKSUnavailable si el primer fetch no produce claves utilizables.
+// Devuelve un error que envuelve auth.ErrInvalidInput si el issuer está vacío, si la URL falta o no
+// es absoluta http/https, o si es http contra un host que no es loopback; y auth.ErrJWKSUnavailable
+// si el primer fetch no produce claves utilizables.
 func NewMultiVerifierFromJWKS(issuer string, opts JWKSOptions) (*MultiVerifier, error) {
 	if err := requireArg("issuer", issuer); err != nil {
 		return nil, err
@@ -121,6 +151,18 @@ func NewMultiVerifierFromJWKS(issuer string, opts JWKSOptions) (*MultiVerifier, 
 	return mv, nil
 }
 
+// isLoopbackHost reporta si el host de una URL es la máquina local.
+//
+// Cubre las dos formas en que aparece: una IP de loopback (127.0.0.0/8, ::1) y el nombre
+// `localhost`, que no es una IP pero es lo que se escribe en la práctica.
+func isLoopbackHost(hostname string) bool {
+	if strings.EqualFold(hostname, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
+}
+
 // newJWKSState valida las opciones y aplica los valores por defecto.
 func newJWKSState(opts JWKSOptions) (*jwksState, error) {
 	if err := requireArg("opts.URL", opts.URL); err != nil {
@@ -135,6 +177,15 @@ func newJWKSState(opts JWKSOptions) (*jwksState, error) {
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("%w: el esquema de opts.URL debe ser http o https, y es %q", auth.ErrInvalidInput, parsed.Scheme)
+	}
+	// El JWKS es el único punto sobre el que descansa «solo identity-core emite» (ADR-0002): quien
+	// pueda servir ese documento sustituye el conjunto de claves entero y firma tokens que todos los
+	// consumidores aceptan. Ni el `kid` obligatorio ni la comprobación del punto sobre la curva ayudan
+	// ahí, porque los pone el atacante. Por eso `http` solo vale contra loopback, que es el caso de
+	// desarrollo real; contra cualquier otro host se exige TLS.
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return nil, fmt.Errorf("%w: opts.URL apunta a %q por http; fuera de loopback el JWKS se sirve por https",
+			auth.ErrInvalidInput, parsed.Host)
 	}
 
 	state := &jwksState{
@@ -170,10 +221,10 @@ func (mv *MultiVerifier) verifierFromJWKS(kid string) (*Verifier, error) {
 		return verifier, nil
 	}
 
-	// El `kid` no está y la caché es fresca: puede ser una rotación que aún no hemos visto. Un solo
-	// intento por ventana de cooldown, y un fallo aquí NO es fail-closed —la caché sigue vigente— así
-	// que el veredicto es «kid desconocido», no «JWKS inalcanzable».
-	if !refreshed && mv.tryOutOfCycleRefresh() {
+	// El `kid` no está y la caché es fresca: puede ser una rotación que aún no hemos visto. Se intenta
+	// un refetch dentro del presupuesto de la ventana, y un fallo aquí NO es fail-closed —la caché
+	// sigue vigente— así que el veredicto es «kid desconocido», no «JWKS inalcanzable».
+	if !refreshed && mv.tryOutOfCycleRefresh(kid) {
 		if verifier := mv.lookup(kid); verifier != nil {
 			return verifier, nil
 		}
@@ -189,14 +240,34 @@ func (mv *MultiVerifier) cacheStale() bool {
 	return time.Since(mv.jwks.fetchedAt) > mv.jwks.cacheTTL
 }
 
-// refreshIfStale refresca la caché solo si sigue vencida tras ganar el turno de fetch. La segunda
-// comprobación no es redundante: mientras esperábamos el turno, otra goroutine pudo refrescarla.
+// recentFailure devuelve el error del último intento fallido si todavía está dentro de la ventana de
+// backoff, o nil si toca reintentar.
+func (mv *MultiVerifier) recentFailure() error {
+	mv.mu.RLock()
+	defer mv.mu.RUnlock()
+	if mv.jwks.lastErr == nil || time.Since(mv.jwks.lastFailure) >= failureBackoff {
+		return nil
+	}
+	return mv.jwks.lastErr
+}
+
+// refreshIfStale refresca la caché solo si hace falta, tras ganar el turno de fetch.
+//
+// Las dos comprobaciones que hay tras tomar fetchMu no son redundantes: mientras esperábamos el
+// turno, otra goroutine pudo refrescar la caché (y entonces no hay nada que hacer) o pudo intentarlo
+// y fallar (y entonces se comparte SU error en vez de repetir la petición). Sin esto último, un
+// emisor colgado convierte N validaciones concurrentes en N peticiones en serie: el candado las
+// ordena, pero cada una vuelve a ver la caché vencida y pide otra vez, y la última acaba esperando
+// N veces el timeout del cliente.
 func (mv *MultiVerifier) refreshIfStale() error {
 	mv.jwks.fetchMu.Lock()
 	defer mv.jwks.fetchMu.Unlock()
 
 	if !mv.cacheStale() {
 		return nil
+	}
+	if err := mv.recentFailure(); err != nil {
+		return err
 	}
 	return mv.fetchAndSwap()
 }
@@ -211,11 +282,28 @@ func (mv *MultiVerifier) forceRefresh() error {
 
 // tryOutOfCycleRefresh intenta un refetch por `kid` desconocido y reporta si la caché quedó
 // actualizada. Devuelve false si el limitador de tasa lo bloquea o si el fetch falla.
-func (mv *MultiVerifier) tryOutOfCycleRefresh() bool {
+//
+// El limitador tiene dos piezas y ninguna sobra:
+//
+//   - Memoria por `kid` dentro de la ventana. Repetir el mismo `kid` inexistente no vuelve a
+//     preguntar: ya sabemos la respuesta. Esto es lo que hace que un atacante que machaca con un
+//     `kid` inventado tenga coste cero para el emisor.
+//   - Presupuesto de maxOutOfCycleRefetches peticiones por ventana, no una sola. Con una sola, el
+//     primero que llegue —que puede ser justo ese `kid` basura— quema el turno de todos, y una
+//     rotación de clave legítima se queda sin absorber hasta que expire la ventana. El presupuesto
+//     deja pasar al `kid` nuevo de verdad sin abrir la puerta a una tormenta de refetch.
+func (mv *MultiVerifier) tryOutOfCycleRefresh(kid string) bool {
 	mv.mu.Lock()
-	blocked := !mv.jwks.lastOutOfCycle.IsZero() && time.Since(mv.jwks.lastOutOfCycle) < mv.jwks.refetchCooldown
+	if time.Since(mv.jwks.windowStart) >= mv.jwks.refetchCooldown {
+		mv.jwks.windowStart = time.Now()
+		mv.jwks.outOfCycleCount = 0
+		mv.jwks.unknownKids = make(map[string]struct{})
+	}
+	_, alreadyAsked := mv.jwks.unknownKids[kid]
+	blocked := alreadyAsked || mv.jwks.outOfCycleCount >= maxOutOfCycleRefetches
 	if !blocked {
-		mv.jwks.lastOutOfCycle = time.Now()
+		mv.jwks.outOfCycleCount++
+		mv.jwks.unknownKids[kid] = struct{}{}
 	}
 	mv.mu.Unlock()
 
@@ -233,6 +321,7 @@ func (mv *MultiVerifier) tryOutOfCycleRefresh() bool {
 func (mv *MultiVerifier) fetchAndSwap() error {
 	keys, err := fetchJWKS(mv.jwks.client, mv.jwks.url)
 	if err != nil {
+		mv.recordFailure(err)
 		return err
 	}
 
@@ -240,7 +329,9 @@ func (mv *MultiVerifier) fetchAndSwap() error {
 	for kid, publicKey := range keys {
 		verifier, verr := NewVerifier(publicKey, mv.issuer)
 		if verr != nil {
-			return fmt.Errorf("%w: la clave %q del JWKS de %s no es utilizable: %w", auth.ErrJWKSUnavailable, kid, mv.jwks.url, verr)
+			err := fmt.Errorf("%w: la clave %q del JWKS de %s no es utilizable: %w", auth.ErrJWKSUnavailable, kid, mv.jwks.url, verr)
+			mv.recordFailure(err)
+			return err
 		}
 		verifiers[kid] = verifier
 	}
@@ -248,8 +339,19 @@ func (mv *MultiVerifier) fetchAndSwap() error {
 	mv.mu.Lock()
 	mv.byKid = verifiers
 	mv.jwks.fetchedAt = time.Now()
+	mv.jwks.lastErr = nil
+	mv.jwks.lastFailure = time.Time{}
 	mv.mu.Unlock()
 	return nil
+}
+
+// recordFailure deja constancia de un intento fallido para que las validaciones que lleguen dentro
+// de failureBackoff compartan este error en vez de volver a llamar al emisor.
+func (mv *MultiVerifier) recordFailure(err error) {
+	mv.mu.Lock()
+	mv.jwks.lastErr = err
+	mv.jwks.lastFailure = time.Now()
+	mv.mu.Unlock()
 }
 
 // jwksDocument es un JSON Web Key Set (RFC 7517 §5).

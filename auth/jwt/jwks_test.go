@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -78,6 +79,10 @@ type jwksServer struct {
 	server *httptest.Server
 	hits   atomic.Int64
 
+	// delayNanos simula el emisor que no cae, sino que se cuelga. Es el modo de fallo caro: cerrar el
+	// servidor da «connection refused» al instante y no ejercita ni los timeouts ni la estampida.
+	delayNanos atomic.Int64
+
 	mu     sync.Mutex
 	body   []byte
 	status int
@@ -88,6 +93,10 @@ func newJWKSServer(t *testing.T, body []byte) *jwksServer {
 	js := &jwksServer{body: body, status: http.StatusOK}
 	js.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		js.hits.Add(1)
+
+		if delay := js.delayNanos.Load(); delay > 0 {
+			time.Sleep(time.Duration(delay))
+		}
 
 		js.mu.Lock()
 		status, payload := js.status, js.body
@@ -104,6 +113,9 @@ func newJWKSServer(t *testing.T, body []byte) *jwksServer {
 }
 
 func (js *jwksServer) url() string { return js.server.URL + "/.well-known/jwks.json" }
+
+// setDelay hace que el endpoint tarde `d` en responder, para simular un emisor colgado.
+func (js *jwksServer) setDelay(d time.Duration) { js.delayNanos.Store(int64(d)) }
 
 func (js *jwksServer) setBody(body []byte) {
 	js.mu.Lock()
@@ -457,4 +469,197 @@ func TestMultiVerifierFromJWKS_ConcurrentValidationSharesOneRefetch(t *testing.T
 
 	assert.LessOrEqual(t, server.hits.Load(), int64(2),
 		"un fetch del constructor y como mucho un refresco compartido por las 8 goroutines")
+}
+
+// TestMultiVerifierFromJWKS_SharesOneRequestWhenIssuerHangs cubre el modo de fallo caro: el emisor no
+// se cae, se cuelga. Con la caché vencida, cada validación necesita claves frescas, y sin memoria del
+// último fallo el candado de fetch no colapsa la estampida —solo la ordena—: cada goroutine vuelve a
+// ver la caché vencida, vuelve a pedir, y la última acaba esperando N veces el timeout del cliente.
+//
+// El test lo mide por donde se nota: cuántas peticiones llegaron al emisor y cuánto tardó el
+// conjunto. Todas las validaciones deben fallar (fail-closed), pero fallar barato.
+func TestMultiVerifierFromJWKS_SharesOneRequestWhenIssuerHangs(t *testing.T) {
+	t.Parallel()
+
+	manager, public := newSigner(t, kidPrimary)
+	server := newJWKSServer(t, jwksBody(t, ecEntry(kidPrimary, public)))
+
+	const clientTimeout = 150 * time.Millisecond
+	mv, err := jwt.NewMultiVerifierFromJWKS(testIssuer, jwt.JWKSOptions{
+		URL:        server.url(),
+		CacheTTL:   20 * time.Millisecond,
+		HTTPClient: &http.Client{Timeout: clientTimeout},
+	})
+	require.NoError(t, err)
+
+	token := newIdentityToken(t, manager)
+	hitsTrasConstructor := server.hits.Load()
+
+	server.setDelay(2 * time.Second)
+	time.Sleep(30 * time.Millisecond) // vence la caché
+
+	const validaciones = 20
+	inicio := time.Now()
+	var wg sync.WaitGroup
+	wg.Add(validaciones)
+	for range validaciones {
+		go func() {
+			defer wg.Done()
+			claims, err := mv.ValidateIdentityToken(token, testSystem)
+			assert.Nil(t, claims)
+			assert.ErrorIs(t, err, auth.ErrJWKSUnavailable, "sin claves frescas se rechaza: fail-closed")
+		}()
+	}
+	wg.Wait()
+	transcurrido := time.Since(inicio)
+
+	assert.Equal(t, int64(1), server.hits.Load()-hitsTrasConstructor,
+		"un emisor colgado debe recibir UNA petición, no una por validación")
+	assert.Less(t, transcurrido, 3*clientTimeout,
+		"las validaciones que llegan tras el fallo comparten su error en vez de encadenar timeouts")
+}
+
+// TestMultiVerifierFromJWKS_UnknownKidDoesNotBlockRotation es el caso que rompía antes: un tercero
+// presenta UN token con un `kid` inventado y, con eso solo, deja sin refetch a la rotación de clave
+// legítima que llega justo después. Con un único turno por ventana el ataque costaba un token; ahora
+// el turno consumido por el `kid` basura no agota el presupuesto de la ventana.
+func TestMultiVerifierFromJWKS_UnknownKidDoesNotBlockRotation(t *testing.T) {
+	t.Parallel()
+
+	_, oldPublic := newSigner(t, kidPrimary)
+	newManager, newPublic := newSigner(t, kidSecondary)
+	intruder, _ := newSigner(t, kidUnknown)
+
+	server := newJWKSServer(t, jwksBody(t, ecEntry(kidPrimary, oldPublic)))
+	mv, err := jwt.NewMultiVerifierFromJWKS(testIssuer, jwt.JWKSOptions{
+		URL:             server.url(),
+		CacheTTL:        time.Hour,
+		RefetchCooldown: time.Hour, // ventana larga: si se quemara, no se recuperaría durante el test
+	})
+	require.NoError(t, err)
+
+	// El atacante quema un turno con un kid que no existe.
+	claims, err := mv.ValidateIdentityToken(newIdentityToken(t, intruder), testSystem)
+	assert.Nil(t, claims)
+	require.ErrorIs(t, err, auth.ErrUnknownKid)
+
+	// El emisor rota después.
+	server.setBody(jwksBody(t, ecEntry(kidPrimary, oldPublic), ecEntry(kidSecondary, newPublic)))
+
+	// El usuario legítimo trae la clave nueva y debe pasar.
+	got, err := mv.ValidateIdentityToken(newIdentityToken(t, newManager), testSystem)
+	require.NoError(t, err, "el kid inventado de un tercero no puede impedir absorber una rotación real")
+	assert.Equal(t, testSystem, got.System)
+	assert.Contains(t, mv.Kids(), kidSecondary)
+}
+
+// TestMultiVerifierFromJWKS_RepeatedUnknownKidAsksOnce es la otra mitad del limitador: repetir el
+// mismo `kid` inexistente no vuelve a molestar al emisor, porque la respuesta ya se sabe. Es lo que
+// hace que machacar con un `kid` inventado tenga coste cero.
+func TestMultiVerifierFromJWKS_RepeatedUnknownKidAsksOnce(t *testing.T) {
+	t.Parallel()
+
+	_, public := newSigner(t, kidPrimary)
+	intruder, _ := newSigner(t, kidUnknown)
+
+	server := newJWKSServer(t, jwksBody(t, ecEntry(kidPrimary, public)))
+	mv, err := jwt.NewMultiVerifierFromJWKS(testIssuer, jwt.JWKSOptions{
+		URL:             server.url(),
+		CacheTTL:        time.Hour,
+		RefetchCooldown: time.Hour,
+	})
+	require.NoError(t, err)
+
+	token := newIdentityToken(t, intruder)
+	for range 10 {
+		claims, err := mv.ValidateIdentityToken(token, testSystem)
+		assert.Nil(t, claims)
+		assert.ErrorIs(t, err, auth.ErrUnknownKid)
+	}
+
+	assert.Equal(t, int64(2), server.hits.Load(),
+		"el constructor pide una vez y el kid desconocido provoca UN refetch, por muchas veces que se repita")
+}
+
+// TestNewMultiVerifierFromJWKS_RejectsPlainHTTPOutsideLoopback: el JWKS por http contra un host
+// remoto es la vía directa a sustituir el conjunto de claves entero y forjar tokens que todos los
+// consumidores aceptan. Contra loopback se permite, porque es el ambiente de desarrollo real.
+func TestNewMultiVerifierFromJWKS_RejectsPlainHTTPOutsideLoopback(t *testing.T) {
+	t.Parallel()
+
+	remotas := []string{
+		"http://identity.example/jwks.json",
+		"http://10.0.0.5:8200/jwks.json",
+		"http://identity.internal:8200/.well-known/jwks.json",
+	}
+	for _, raw := range remotas {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+			mv, err := jwt.NewMultiVerifierFromJWKS(testIssuer, jwt.JWKSOptions{URL: raw})
+			assert.Nil(t, mv)
+			assert.ErrorIs(t, err, auth.ErrInvalidInput)
+		})
+	}
+}
+
+// TestNewMultiVerifierFromJWKS_AllowsPlainHTTPOnLoopback es la contraparte: el ambiente local no
+// tiene TLS y debe seguir funcionando. Se comprueba con un servidor real en 127.0.0.1.
+func TestNewMultiVerifierFromJWKS_AllowsPlainHTTPOnLoopback(t *testing.T) {
+	t.Parallel()
+
+	manager, public := newSigner(t, kidPrimary)
+	server := newJWKSServer(t, jwksBody(t, ecEntry(kidPrimary, public)))
+	require.True(t, strings.HasPrefix(server.url(), "http://127.0.0.1:"),
+		"el servidor de prueba debe escuchar en loopback sin TLS para que este test valga")
+
+	mv, err := jwt.NewMultiVerifierFromJWKS(testIssuer, jwt.JWKSOptions{URL: server.url()})
+	require.NoError(t, err)
+
+	got, err := mv.ValidateIdentityToken(newIdentityToken(t, manager), testSystem)
+	require.NoError(t, err)
+	assert.Equal(t, testSystem, got.System)
+}
+
+// TestMultiVerifierFromJWKS_ConcurrentRotation ejercita de verdad el reemplazo en caliente del mapa de
+// claves: mientras unas goroutines validan, el emisor rota y la caché se reescribe. Con -race activo
+// es la prueba de que byKid está bien protegido en el único modo donde se muta.
+func TestMultiVerifierFromJWKS_ConcurrentRotation(t *testing.T) {
+	t.Parallel()
+
+	oldManager, oldPublic := newSigner(t, kidPrimary)
+	newManager, newPublic := newSigner(t, kidSecondary)
+
+	server := newJWKSServer(t, jwksBody(t, ecEntry(kidPrimary, oldPublic)))
+	mv, err := jwt.NewMultiVerifierFromJWKS(testIssuer, jwt.JWKSOptions{
+		URL:      server.url(),
+		CacheTTL: time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	oldToken := newIdentityToken(t, oldManager)
+	newToken := newIdentityToken(t, newManager)
+	server.setBody(jwksBody(t, ecEntry(kidPrimary, oldPublic), ecEntry(kidSecondary, newPublic)))
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			// La clave vieja sigue publicada durante la rotación: nunca debe fallar.
+			_, err := mv.ValidateIdentityToken(oldToken, testSystem)
+			assert.NoError(t, err)
+		}()
+		go func() {
+			defer wg.Done()
+			// La nueva puede llegar antes de que se absorba; lo que no puede es dar otra cosa.
+			if _, err := mv.ValidateIdentityToken(newToken, testSystem); err != nil {
+				assert.ErrorIs(t, err, auth.ErrUnknownKid)
+			}
+		}()
+	}
+	wg.Wait()
+
+	got, err := mv.ValidateIdentityToken(newToken, testSystem)
+	require.NoError(t, err, "acabada la rotación, la clave nueva ya debe estar en la caché")
+	assert.Equal(t, testSystem, got.System)
 }
