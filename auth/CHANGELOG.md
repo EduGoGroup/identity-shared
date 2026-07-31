@@ -5,6 +5,16 @@ y [Versionado Semantico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.0]
+
+El ecosistema entra en el token de servicio. Es la pieza que faltaba para que identity T4.2 —el
+canje `POST /auth/token`— pueda emitir algo que el destino sepa autorizar: hasta esta versión un
+Service Token decía QUÉ operación cubre, por los scopes, pero no sobre las aplicaciones de QUIÉN.
+
+**Cambio incompatible**, en fuente y en cable: el campo es obligatorio al emitir y su ausencia se
+rechaza al verificar. Sube a minor por eso, aunque a fecha del release no haya ningún token de
+servicio vivo — la versión describe el contrato, no la suerte que se tuvo con el calendario.
+
 ### Added
 
 - **El token de servicio lleva el ecosistema** (`ecosystem_key`), pedido por identity T4.2. Es lo que
