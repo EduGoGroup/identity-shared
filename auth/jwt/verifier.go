@@ -112,10 +112,18 @@ func (v *Verifier) ValidateIdentityToken(tokenString, expectedSystem string) (*C
 
 // ValidateServiceToken verifica un token de servicio y devuelve sus claims.
 //
-// Comprueba, además de la firma, el issuer y la vigencia: `token_use == TokenUseService` y que `aud`
-// sea exactamente expectedAudience. La audiencia se compara por igualdad estricta, no por
-// pertenencia: un token de servicio se emite para una sola audiencia (ver ServiceTokenInput), así
-// que un `aud` con más de una entrada no lo produjo este ecosistema.
+// Comprueba, además de la firma, el issuer y la vigencia: `token_use == TokenUseService`, que `aud`
+// sea exactamente expectedAudience y que `ecosystem_key` venga poblado. La audiencia se compara por
+// igualdad estricta, no por pertenencia: un token de servicio se emite para una sola audiencia (ver
+// ServiceTokenInput), así que un `aud` con más de una entrada no lo produjo este ecosistema.
+//
+// El ecosistema se exige PRESENTE pero NO se compara contra nada, y la asimetría con `aud` es
+// deliberada. `aud` dice a quién va dirigido el token, así que el verificador —que sabe quién es—
+// puede y debe comparar. `ecosystem_key` dice de parte de quién viene, y eso el verificador no lo
+// sabe: es el consumidor, en el punto de uso, quien lo cruza contra la aplicación sobre la que se
+// va a escribir. Lo que sí puede hacer aquí es cerrar el caso degenerado: un token sin ese claim no
+// lo emitió GenerateServiceToken —lo rechaza en la entrada—, así que aceptarlo solo serviría para
+// entregar al consumidor un ecosistema vacío que un `if` distraído leería como «cualquiera».
 //
 // Comprobar los scopes NO es tarea del verificador: eso lo decide quien conoce la operación, con
 // ServiceClaims.HasScope.
@@ -136,6 +144,9 @@ func (v *Verifier) ValidateServiceToken(tokenString, expectedAudience string) (*
 	}
 	if len(claims.Audience) != 1 || claims.Audience[0] != expectedAudience {
 		return nil, fmt.Errorf("%w: la audiencia del token es %v y se esperaba exactamente %q", auth.ErrInvalidToken, claims.Audience, expectedAudience)
+	}
+	if claims.EcosystemKey == "" {
+		return nil, fmt.Errorf("%w: el token de servicio no lleva ecosystem_key", auth.ErrInvalidToken)
 	}
 
 	return claims, nil

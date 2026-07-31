@@ -25,6 +25,9 @@ const (
 	testEmail    = "persona@example.com"
 	testUserID   = "8f2b1c34-5d6e-4a7b-8c9d-0e1f2a3b4c5d"
 	testAudience = "identity.api"
+	// testEcosystem es la clave NATURAL de un ecosistema (`edugo`), no la namespaced de una
+	// aplicación (`edugo.kmp`): son dos vocabularios distintos y el claim lleva el primero.
+	testEcosystem = "edugo"
 )
 
 // newSigningKey genera una clave ECDSA P-256 de prueba.
@@ -213,10 +216,11 @@ func TestManager_GenerateServiceToken_RoundTrip(t *testing.T) {
 	scopes := []string{"identity.users.*", "identity.sessions.read"}
 	before := time.Now()
 	token, expiresAt, err := m.GenerateServiceToken(jwt.ServiceTokenInput{
-		ClientID: "reporting-worker",
-		Audience: testAudience,
-		Scopes:   scopes,
-		TTL:      30 * time.Minute,
+		ClientID:     "reporting-worker",
+		Audience:     testAudience,
+		EcosystemKey: testEcosystem,
+		Scopes:       scopes,
+		TTL:          30 * time.Minute,
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
@@ -227,6 +231,8 @@ func TestManager_GenerateServiceToken_RoundTrip(t *testing.T) {
 	assert.Equal(t, "reporting-worker", claims.ClientID)
 	assert.Equal(t, scopes, claims.Scopes)
 	assert.Equal(t, jwt.TokenUseService, claims.TokenUse)
+	assert.Equal(t, testEcosystem, claims.EcosystemKey, "el ecosistema viaja en su claim propio")
+	assert.NotContains(t, claims.Audience, testEcosystem, "el ecosistema NO se mete en aud: son dos ejes")
 	assert.Equal(t, "service:reporting-worker", claims.Subject)
 	assert.Equal(t, gojwt.ClaimStrings{testAudience}, claims.Audience)
 	assert.Equal(t, testIssuer, claims.Issuer)
@@ -243,7 +249,7 @@ func TestManager_GenerateServiceToken_RejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 	m, _ := newTestManager(t)
 
-	valid := jwt.ServiceTokenInput{ClientID: "reporting-worker", Audience: testAudience, TTL: time.Hour}
+	valid := jwt.ServiceTokenInput{ClientID: "reporting-worker", Audience: testAudience, EcosystemKey: testEcosystem, TTL: time.Hour}
 
 	tests := []struct {
 		name  string
@@ -251,6 +257,10 @@ func TestManager_GenerateServiceToken_RejectsInvalidInput(t *testing.T) {
 	}{
 		{name: "ClientID vacío", mutar: func(in *jwt.ServiceTokenInput) { in.ClientID = "" }},
 		{name: "Audience vacía", mutar: func(in *jwt.ServiceTokenInput) { in.Audience = "" }},
+		// Sin ecosistema NO se emite. Es la mitad de emisión de la garantía que el verificador
+		// cierra por el otro lado: un token de servicio que no dice de parte de quién viene no es
+		// un token con un campo menos, es un token que no autoriza nada en destino.
+		{name: "EcosystemKey vacía", mutar: func(in *jwt.ServiceTokenInput) { in.EcosystemKey = "" }},
 		{name: "TTL por debajo del minuto", mutar: func(in *jwt.ServiceTokenInput) { in.TTL = time.Second }},
 		{name: "TTL cero", mutar: func(in *jwt.ServiceTokenInput) { in.TTL = 0 }},
 	}
@@ -279,7 +289,7 @@ func TestManager_SignedTokensCarryKidAndES256Header(t *testing.T) {
 	require.NoError(t, err)
 
 	serviceToken, _, err := m.GenerateServiceToken(jwt.ServiceTokenInput{
-		ClientID: "reporting-worker", Audience: testAudience, TTL: time.Hour,
+		ClientID: "reporting-worker", Audience: testAudience, EcosystemKey: testEcosystem, TTL: time.Hour,
 	})
 	require.NoError(t, err)
 
@@ -306,7 +316,7 @@ func TestManager_PayloadCarriesNoBusinessClaims(t *testing.T) {
 	require.NoError(t, err)
 
 	serviceToken, _, err := m.GenerateServiceToken(jwt.ServiceTokenInput{
-		ClientID: "reporting-worker", Audience: testAudience, Scopes: []string{"identity.users.read"}, TTL: time.Hour,
+		ClientID: "reporting-worker", Audience: testAudience, EcosystemKey: testEcosystem, Scopes: []string{"identity.users.read"}, TTL: time.Hour,
 	})
 	require.NoError(t, err)
 
@@ -332,10 +342,13 @@ func TestManager_PayloadCarriesNoBusinessClaims(t *testing.T) {
 			assert.NotContains(t, payload, key)
 		}
 		assert.ElementsMatch(t,
-			[]string{"client_id", "scopes", "token_use", "iss", "sub", "aud", "jti", "iat", "nbf", "exp"},
+			[]string{"client_id", "scopes", "token_use", "ecosystem_key", "iss", "sub", "aud", "jti", "iat", "nbf", "exp"},
 			mapKeys(payload),
 			"la lista de claims del token de servicio es cerrada",
 		)
+		// El NOMBRE del claim en el cable es contrato: lo leen verificadores de otros lenguajes
+		// que no comparten este struct. Se afirma el literal, no el campo de Go.
+		assert.Equal(t, testEcosystem, payload["ecosystem_key"])
 	})
 }
 

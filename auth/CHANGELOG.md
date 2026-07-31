@@ -5,6 +5,46 @@ y [Versionado Semantico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.0]
+
+El ecosistema entra en el token de servicio. Es la pieza que faltaba para que identity T4.2 —el
+canje `POST /auth/token`— pueda emitir algo que el destino sepa autorizar: hasta esta versión un
+Service Token decía QUÉ operación cubre, por los scopes, pero no sobre las aplicaciones de QUIÉN.
+
+**Cambio incompatible**, en fuente y en cable: el campo es obligatorio al emitir y su ausencia se
+rechaza al verificar. Sube a minor por eso, aunque a fecha del release no haya ningún token de
+servicio vivo — la versión describe el contrato, no la suerte que se tuvo con el calendario.
+
+### Added
+
+- **El token de servicio lleva el ecosistema** (`ecosystem_key`), pedido por identity T4.2. Es lo que
+  el Service Token gana sobre la API key en claro: identity ADR-0022 fija el ecosistema como «el dato
+  con el que se autoriza en destino», y sin él un token de servicio está perfectamente firmado y es
+  inservible —el consumidor sabe QUÉ operación cubre, por los scopes, pero no sobre las aplicaciones
+  de QUIÉN—. Tres piezas: `ServiceClaims.EcosystemKey` (`claims.go`), `ServiceTokenInput.EcosystemKey`
+  que `GenerateServiceToken` escribe (`manager.go`) y la comprobación de presencia en
+  `Verifier.ValidateServiceToken` (`verifier.go`).
+
+  El claim va APARTE de `aud` y no dentro: `aud` responde *a quién va dirigido* el token y
+  `ecosystem_key` *de parte de quién viene*. Son ejes ortogonales, y fundirlos devuelve el límite
+  entre ecosistemas a una convención de nombrado que hay que partir por un separador —el error de
+  modelado que identity ADR-0022 ya quitó del `client_id`—.
+
+### Changed
+
+- **Cambio incompatible (fuente): `ServiceTokenInput.EcosystemKey` es OBLIGATORIO.** Un
+  `GenerateServiceToken` con el campo vacío devuelve error envuelto sobre `auth.ErrInvalidInput` en
+  lugar de emitir. No es sutil ni silencioso: el código que construía la entrada sin ese campo
+  compila igual —Go rellena el valor cero— y falla en la primera emisión. Se eligió así a propósito
+  frente a un campo opcional, porque un emisor que lo olvida produciría tokens firmados que el
+  destino no puede usar, con el síntoma a kilómetros del defecto.
+- **Cambio incompatible (cable): `Verifier.ValidateServiceToken` rechaza un token de servicio sin
+  `ecosystem_key`** con `auth.ErrInvalidToken`. Afecta a los tokens acuñados por versiones
+  anteriores del módulo. A fecha de este cambio no hay ninguno vivo —en identity el canje
+  `POST /auth/token` es justamente lo que T4.2 introduce, y hasta ahora no existía ningún emisor de
+  tokens de servicio en producción—, así que no hace falta ventana de convivencia; si apareciera un
+  emisor de otro lenguaje, tendría que poblar el claim antes de subir esta versión.
+
 ## [0.2.0]
 
 Endurecimiento del JWKS y salto de toolchain. La 0.1.0 dejó la cerrajería funcionando; esta versión

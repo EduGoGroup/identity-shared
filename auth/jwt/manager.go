@@ -93,13 +93,22 @@ func (in IdentityTokenInput) validate() error {
 
 // ServiceTokenInput son los datos necesarios para emitir un token de servicio.
 //
-// ClientID y Audience son obligatorios y TTL debe ser de al menos un minuto. Scopes puede venir
-// vacío: un token sin scopes acredita al cliente pero no autoriza ninguna operación.
+// ClientID, Audience y EcosystemKey son obligatorios y TTL debe ser de al menos un minuto. Scopes
+// puede venir vacío: un token sin scopes acredita al cliente pero no autoriza ninguna operación.
 type ServiceTokenInput struct {
 	ClientID string
 	Audience string
-	Scopes   []string
-	TTL      time.Duration
+	// EcosystemKey va al claim `ecosystem_key` y es OBLIGATORIO.
+	//
+	// Que sea obligatorio, y no un campo opcional que el emisor rellena si puede, es la única
+	// forma de que la garantía valga algo. Opcional, el modo de fallo sería este: un emisor que
+	// olvida poblarlo produce tokens perfectamente firmados que el destino no puede usar para
+	// autorizar nada, y el síntoma —403 en todo, o peor, un `if` que trata la cadena vacía como
+	// «sin restricción»— aparece a kilómetros del defecto. Obligatorio, el emisor incompleto
+	// falla al emitir, con el nombre del campo que falta.
+	EcosystemKey string
+	Scopes       []string
+	TTL          time.Duration
 }
 
 func (in ServiceTokenInput) validate() error {
@@ -108,6 +117,9 @@ func (in ServiceTokenInput) validate() error {
 	}
 	if in.Audience == "" {
 		return fmt.Errorf("%w: Audience no puede estar vacía", auth.ErrInvalidInput)
+	}
+	if in.EcosystemKey == "" {
+		return fmt.Errorf("%w: EcosystemKey no puede estar vacía: sin ella el token no autoriza nada en destino", auth.ErrInvalidInput)
 	}
 	if in.TTL < minTokenTTL {
 		return fmt.Errorf("%w: TTL debe ser de al menos %s", auth.ErrInvalidInput, minTokenTTL)
@@ -155,9 +167,10 @@ func (m *Manager) GenerateIdentityToken(in IdentityTokenInput) (string, time.Tim
 // su instante de expiración.
 //
 // Rellena `sub` con `"service:" + in.ClientID` para que el sujeto de un cliente máquina-a-máquina
-// nunca colisione con el identificador de un usuario, y `aud` con in.Audience. El claim `token_use`
-// queda fijado a TokenUseService. Se firma con la misma clave ES256 y el mismo `kid` que los
-// Identity Token: no hay una vía de firma aparte para servicios (identity ADR-0012).
+// nunca colisione con el identificador de un usuario, `aud` con in.Audience y `ecosystem_key` con
+// in.EcosystemKey. El claim `token_use` queda fijado a TokenUseService. Se firma con la misma clave
+// ES256 y el mismo `kid` que los Identity Token: no hay una vía de firma aparte para servicios
+// (identity ADR-0012).
 //
 // Devuelve un error que envuelve auth.ErrInvalidInput si la entrada no cumple el contrato descrito
 // en ServiceTokenInput.
@@ -170,9 +183,10 @@ func (m *Manager) GenerateServiceToken(in ServiceTokenInput) (string, time.Time,
 	expiresAt := now.Add(in.TTL)
 
 	claims := ServiceClaims{
-		ClientID: in.ClientID,
-		Scopes:   in.Scopes,
-		TokenUse: TokenUseService,
+		ClientID:     in.ClientID,
+		Scopes:       in.Scopes,
+		TokenUse:     TokenUseService,
+		EcosystemKey: in.EcosystemKey,
 		RegisteredClaims: gojwt.RegisteredClaims{
 			ID:        uuid.New().String(),
 			Issuer:    m.issuer,
