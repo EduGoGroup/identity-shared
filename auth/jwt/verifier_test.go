@@ -73,9 +73,10 @@ func validIdentityClaims() jwt.Claims {
 func validServiceClaims() jwt.ServiceClaims {
 	now := time.Now()
 	return jwt.ServiceClaims{
-		ClientID: "reporting-worker",
-		Scopes:   []string{"identity.users.read"},
-		TokenUse: jwt.TokenUseService,
+		ClientID:     "reporting-worker",
+		Scopes:       []string{"identity.users.read"},
+		TokenUse:     jwt.TokenUseService,
+		EcosystemKey: testEcosystem,
 		RegisteredClaims: gojwt.RegisteredClaims{
 			ID:        "9c8b7a65-4321-4dcb-8a9f-0e1d2c3b4a59",
 			Issuer:    testIssuer,
@@ -145,10 +146,11 @@ func TestVerifier_ValidateServiceToken_RoundTrip(t *testing.T) {
 	manager, verifier, _ := newVerifierPair(t)
 
 	token, _, err := manager.GenerateServiceToken(jwt.ServiceTokenInput{
-		ClientID: "reporting-worker",
-		Audience: testAudience,
-		Scopes:   []string{"identity.users.*"},
-		TTL:      time.Hour,
+		ClientID:     "reporting-worker",
+		Audience:     testAudience,
+		EcosystemKey: testEcosystem,
+		Scopes:       []string{"identity.users.*"},
+		TTL:          time.Hour,
 	})
 	require.NoError(t, err)
 
@@ -158,6 +160,7 @@ func TestVerifier_ValidateServiceToken_RoundTrip(t *testing.T) {
 	assert.Equal(t, "reporting-worker", claims.ClientID)
 	assert.Equal(t, jwt.TokenUseService, claims.TokenUse)
 	assert.Equal(t, "service:reporting-worker", claims.Subject)
+	assert.Equal(t, testEcosystem, claims.EcosystemKey, "el ecosistema sobrevive al viaje de ida y vuelta")
 	assert.True(t, claims.HasScope("identity.users.create"))
 }
 
@@ -170,7 +173,7 @@ func TestVerifier_RejectsEmptyExpectedArguments(t *testing.T) {
 	})
 	require.NoError(t, err)
 	serviceToken, _, err := manager.GenerateServiceToken(jwt.ServiceTokenInput{
-		ClientID: "reporting-worker", Audience: testAudience, TTL: time.Hour,
+		ClientID: "reporting-worker", Audience: testAudience, EcosystemKey: testEcosystem, TTL: time.Hour,
 	})
 	require.NoError(t, err)
 
@@ -230,7 +233,7 @@ func TestVerifier_RejectsWrongTokenUse(t *testing.T) {
 	})
 	require.NoError(t, err)
 	serviceToken, _, err := manager.GenerateServiceToken(jwt.ServiceTokenInput{
-		ClientID: "reporting-worker", Audience: testSystem, TTL: time.Hour,
+		ClientID: "reporting-worker", Audience: testSystem, EcosystemKey: testEcosystem, TTL: time.Hour,
 	})
 	require.NoError(t, err)
 
@@ -296,6 +299,29 @@ func TestVerifier_RejectsWrongTokenUseInIsolation(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestVerifier_ValidateServiceToken_RejectsMissingEcosystem cierra el caso degenerado por el lado
+// del verificador: un token de servicio SIN `ecosystem_key`, firmado con la clave buena y con todo
+// lo demás correcto.
+//
+// Hay que forjarlo a mano —GenerateServiceToken ya no lo emite— y esa es justamente la razón de que
+// el test exista: la garantía no puede descansar solo en el emisor, porque el verificador acepta
+// tokens de CUALQUIER emisor que tenga la clave, incluida una versión anterior de este mismo módulo
+// o una reimplementación en otro lenguaje. Sin esta comprobación, el consumidor recibiría un
+// principal con el ecosistema vacío, que no casa con ninguna aplicación en una comparación pero se
+// lee como «sin restricción» en un `if` escrito de prisa.
+func TestVerifier_ValidateServiceToken_RejectsMissingEcosystem(t *testing.T) {
+	t.Parallel()
+	_, verifier, key := newVerifierPair(t)
+
+	claims := validServiceClaims()
+	claims.EcosystemKey = ""
+	token := signCustom(t, gojwt.SigningMethodES256, key, testKid, claims)
+
+	got, err := verifier.ValidateServiceToken(token, testAudience)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, auth.ErrInvalidToken)
 }
 
 func TestVerifier_ValidateServiceToken_RejectsAudienceMismatch(t *testing.T) {

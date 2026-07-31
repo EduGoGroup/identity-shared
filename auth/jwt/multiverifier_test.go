@@ -110,7 +110,7 @@ func TestMultiVerifier_ValidateServiceToken(t *testing.T) {
 	require.NoError(t, err)
 
 	token, _, err := manager.GenerateServiceToken(jwt.ServiceTokenInput{
-		ClientID: "reporting-worker", Audience: testAudience, Scopes: []string{"identity.*"}, TTL: time.Hour,
+		ClientID: "reporting-worker", Audience: testAudience, EcosystemKey: testEcosystem, Scopes: []string{"identity.*"}, TTL: time.Hour,
 	})
 	require.NoError(t, err)
 
@@ -237,7 +237,7 @@ func TestMultiVerifier_ConcurrentUse(t *testing.T) {
 	tokenUnknown := newIdentityToken(t, intruder)
 
 	serviceToken, _, err := signerA.GenerateServiceToken(jwt.ServiceTokenInput{
-		ClientID: "reporting-worker", Audience: testAudience, TTL: time.Hour,
+		ClientID: "reporting-worker", Audience: testAudience, EcosystemKey: testEcosystem, TTL: time.Hour,
 	})
 	require.NoError(t, err)
 

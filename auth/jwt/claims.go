@@ -65,10 +65,44 @@ type Claims struct {
 // acceso. `scopes` son patrones de permiso evaluados con HasScope.
 //
 // Igual que Claims, no transporta ningún concepto de negocio.
+//
+// # Por qué `ecosystem_key` SÍ cabe aquí y no viola la frontera del módulo
+//
+// La cabecera de Claims dice que aquí no viven conceptos de negocio, y `ecosystem_key` es la
+// excepción razonada, no un olvido de esa regla. Lo que la regla prohíbe es la AUTORIZACIÓN
+// fotografiada —roles, permisos, grants—, porque acoplarla al token obliga a reemitirlo en cada
+// cambio y convierte cualquier token vigente en una ventana de privilegios obsoletos. El
+// ecosistema no es eso: es una propiedad de la IDENTIDAD del portador, tan inmutable como el
+// `client_id` con el que se registró, y por eso está exactamente al mismo nivel. Es el gemelo de
+// `system` en Claims, que ya vive aquí por el mismo motivo.
+//
+// # Por qué NO va dentro de `aud`
+//
+// Son dos ejes ortogonales. `aud` responde A QUIÉN va dirigido el token —qué servicio puede
+// aceptarlo—; `ecosystem_key` responde DE PARTE DE QUIÉN viene —sobre las aplicaciones de qué
+// ecosistema puede actuar el portador—. Meterlos en el mismo campo obliga a que el verificador
+// parta una cadena para separarlos, y a partir de ahí el límite entre ecosistemas depende de una
+// convención de nombrado en vez de un dato. Es el error de modelado que identity ADR-0022 ya
+// eliminó una vez del `client_id`, y no se reintroduce por la puerta de la audiencia.
+//
+// # Qué se rompe sin él
+//
+// Nada, en la firma; todo, en el destino. Un token de servicio sin este claim está perfectamente
+// firmado y es inservible: quien lo recibe sabe QUÉ operación cubre —por los scopes— pero no
+// sobre las aplicaciones de QUIÉN, que es el dato con el que se autoriza en destino (identity
+// ADR-0022). Por eso el emisor lo exige (ver ServiceTokenInput) y el verificador lo comprueba.
 type ServiceClaims struct {
 	ClientID string   `json:"client_id"`
 	Scopes   []string `json:"scopes"`
 	TokenUse string   `json:"token_use"`
+	// EcosystemKey es la clave natural del ecosistema al que pertenece la credencial —`edugo`,
+	// `wapp`, `identity`—, NUNCA la clave namespaced de una aplicación (`edugo.kmp`).
+	//
+	// Es obligatorio: no hay valor que signifique «todos los ecosistemas», ni cadena vacía, ni
+	// comodín. Un token que llegara con él vacío no lo emitió este módulo, y el verificador lo
+	// rechaza en vez de dejar que el consumidor decida qué hacer con «ningún ecosistema» —que en
+	// una comparación no casa con nada, pero en un `if` mal escrito casa con todo—.
+	EcosystemKey string `json:"ecosystem_key"`
 
 	gojwt.RegisteredClaims
 }

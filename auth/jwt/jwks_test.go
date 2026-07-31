@@ -153,7 +153,7 @@ func TestNewMultiVerifierFromJWKS_ValidatesTokenWithFetchedKey(t *testing.T) {
 	assert.Equal(t, testUserID, claims.Subject)
 
 	serviceToken, _, err := manager.GenerateServiceToken(jwt.ServiceTokenInput{
-		ClientID: "reporting-worker", Audience: testAudience, TTL: time.Hour,
+		ClientID: "reporting-worker", Audience: testAudience, EcosystemKey: testEcosystem, TTL: time.Hour,
 	})
 	require.NoError(t, err)
 	serviceClaims, err := mv.ValidateServiceToken(serviceToken, testAudience)
