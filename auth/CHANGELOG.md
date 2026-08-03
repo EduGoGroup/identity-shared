@@ -5,6 +5,26 @@ y [Versionado Semantico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-02
+
+Parche de seguridad de dependencias. No cambia una línea de este módulo: sube `golang.org/x/crypto`
+de `v0.51.0` a `v0.54.0`.
+
+### Security
+
+- **`golang.org/x/crypto` v0.51.0 → v0.54.0.** `govulncheck` reportaba 14 vulnerabilidades en los
+  módulos requeridos, con arreglo publicado desde `v0.52.0`. **Ninguna era alcanzable** desde este
+  código (`Your code is affected by 0 vulnerabilities`, antes y después), pero este módulo es la
+  cerrajería del SSO del grupo —bcrypt y la firma ES256— y lo que arrastre lo heredan todos sus
+  consumidores: la deuda no se queda aquí, se reparte. Se sube a la última publicada, no a la mínima
+  que cierra el reporte, para no volver a pasar por aquí en el próximo aviso.
+
+  Tras el bump quedan **0** de esas 14. La que sobrevive es **GO-2026-5932** —el paquete
+  `x/crypto/openpgp`, declarado sin mantenimiento e inseguro por diseño— y **no tiene versión con
+  arreglo** (`Fixed in: N/A`): no se cierra subiendo, y este módulo no importa ese paquete.
+
+  Sin cambios de comportamiento ni de API.
+
 ## [0.3.0]
 
 El ecosistema entra en el token de servicio. Es la pieza que faltaba para que identity T4.2 —el
