@@ -12,6 +12,15 @@ linter, `Makefile` raíz, scripts y workflows.
 
 ### Changed
 
+- **Plan 054 (EduGo): toolchain a Go 1.27.4 y golangci-lint v2.14.0, con `versions.env` como fuente
+  única.** Nuevo `versions.env` en la raíz (`GO_VERSION`, `GOLANGCI_LINT_VERSION`): el `Makefile` raíz
+  lo incluye (`include versions.env`; `ci-docker` usa `golang:$(GO_VERSION)-bookworm`) y `ci.yml` y
+  `release.yml` lo cargan en `$GITHUB_ENV` antes de `setup-go`, así que ninguna versión queda escrita a
+  mano en un workflow. Los workflows corren con `GOWORK: 'off'` a nivel de workflow. Actions:
+  `actions/checkout@v5` → `@v7` (también en `sync-main-to-dev.yml`), `actions/setup-go@v6` → `@v7`;
+  `golangci/golangci-lint-action@v9` se queda. Nuevo alias `make ci` → `ci-local`. Lo libera
+  `auth/v0.3.2`.
+
 - **El ecosistema pasa a Go 1.26.5 como base** (`go 1.26.5` en cada `go.mod`, `GO_VERSION` de los
   workflows y `golang:1.26.5-bookworm` en `ci-docker`). Va con **golangci-lint v2.12.2**, y no es
   opcional: la v2.4.0 anterior se niega a arrancar contra un módulo 1.26 con «the Go language
