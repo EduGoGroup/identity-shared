@@ -12,6 +12,11 @@ linter, `Makefile` raíz, scripts y workflows.
 
 ### Changed
 
+- **Plan 054 (EduGo), H.2: `govulncheck` entra en la CI.** Con Dependabot apagado es el único control de
+  vulnerabilidades: `GOVULNCHECK_VERSION=1.9.0` en `versions.env`, `make vuln` (incluido en `ci-local` y
+  `ci-docker`) y un paso «govulncheck» en el job `Validate` de `ci.yml` que falla si hay una
+  vulnerabilidad alcanzable.
+
 - **Plan 054 (EduGo): toolchain a Go 1.27.4 y golangci-lint v2.14.0, con `versions.env` como fuente
   única.** Nuevo `versions.env` en la raíz (`GO_VERSION`, `GOLANGCI_LINT_VERSION`): el `Makefile` raíz
   lo incluye (`include versions.env`; `ci-docker` usa `golang:$(GO_VERSION)-bookworm`) y `ci.yml` y
