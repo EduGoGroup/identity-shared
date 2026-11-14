@@ -43,8 +43,8 @@ Los comandos habituales, desde la raíz:
 
 ```bash
 make help        # lista los targets disponibles
-make ci-local    # fmt-check + vet + lint + tests (lo mismo que corre el CI)
-make ci-docker   # el mismo pipeline dentro del contenedor Go 1.26.5, sin gastar Actions
+make ci-local    # fmt-check + vet + lint + tests (lo mismo que corre el CI); `make ci` es su alias
+make ci-docker   # el mismo pipeline dentro del contenedor golang:$GO_VERSION, sin gastar Actions
 make test-all    # tests unitarios de todos los módulos
 ```
 
@@ -56,10 +56,13 @@ matriz del workflow de CI.
 
 ## Toolchain fijado
 
+La fuente única es [versions.env](./versions.env): la lee el `Makefile` (`include versions.env`) y los
+workflows la cargan en `$GITHUB_ENV`. Ninguna versión se escribe a mano en un workflow.
+
 | Pieza | Versión |
 | --- | --- |
-| Go | `1.26.5` (`go 1.26.5` en cada `go.mod`) |
-| golangci-lint | `v2.12.2` |
+| Go | `1.27.4` (`GO_VERSION`; `go 1.27.4` en cada `go.mod`) |
+| golangci-lint | `v2.14.0` (`GOLANGCI_LINT_VERSION`) |
 
 ## El Identity Token
 

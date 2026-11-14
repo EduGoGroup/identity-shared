@@ -8,8 +8,8 @@ on:
       - '*/v*'
 
 env:
-  GO_VERSION: '1.26.5'
   GOPRIVATE: github.com/EduGoGroup/*
+  GOWORK: 'off'
 
 jobs:
   prepare-release:
@@ -23,7 +23,7 @@ jobs:
       changelog_file: ${{ steps.meta.outputs.changelog_file }}
     steps:
       - name: Checkout codigo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -53,10 +53,14 @@ jobs:
 
     steps:
       - name: Checkout codigo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
+
+      - name: Cargar versiones del toolchain
+        # Fuente unica: versions.env (sin comentarios, solo CLAVE=valor)
+        run: grep -E '^[A-Z_]+=' versions.env >> "$GITHUB_ENV"
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -101,7 +105,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v${{ env.GOLANGCI_LINT_VERSION }}
           working-directory: ${{ needs.prepare-release.outputs.module }}
           args: --timeout=5m
 
@@ -118,7 +122,7 @@ jobs:
 
     steps:
       - name: Checkout codigo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

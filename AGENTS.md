@@ -45,11 +45,15 @@ El `Makefile` **raíz** orquesta todos los módulos; cada módulo tiene el mismo
 su propio `Makefile`.
 
 - Raíz: `make help` · `make build-all` · `make test-all` · `make lint-all` · `make ci-local` (fmt-check
-  + vet + lint + tests, lo que corre el CI) · `make ci-docker` (mismo pipeline dentro del contenedor
-  `golang:1.26.5` con `golangci-lint v2.12.2`, para reproducir el CI sin gastar minutos de Actions).
+  + vet + lint + tests, lo que corre el CI; `make ci` es su alias) · `make ci-docker` (mismo pipeline
+  dentro del contenedor `golang:$(GO_VERSION)-bookworm` con el golangci-lint fijado, para reproducir el CI
+  sin gastar minutos de Actions).
 - Por módulo: `make -C auth test` / `lint` / `fmt` / `vet` / `release-check`.
-- Toolchain fijado: **Go 1.26.5** (`go 1.26.5` en cada `go.mod`), **golangci-lint v2.12.2**. Las variables
-  `GO_VERSION` / `LINT_VERSION` del `Makefile` raíz deben coincidir con `.github/workflows/ci.yml`.
+- Toolchain fijado en **`versions.env`** (raíz del repo), la fuente única: hoy `GO_VERSION=1.27.4` y
+  `GOLANGCI_LINT_VERSION=2.14.0` (plan 054 de EduGo). El `Makefile` raíz hace `include versions.env` y
+  los workflows lo cargan en `$GITHUB_ENV` antes de `setup-go`; **ninguna versión se escribe a mano en un
+  workflow**. La directiva `go` de cada `go.mod` debe coincidir con `GO_VERSION`. Los workflows corren
+  con `GOWORK: 'off'`; los gates locales autoritativos, también (`GOWORK=off`).
 
 ## La fusión que ejecuta la Ola 1 (léelo antes de escribir código aquí)
 
