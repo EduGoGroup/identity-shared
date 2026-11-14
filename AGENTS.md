@@ -45,12 +45,14 @@ El `Makefile` **raíz** orquesta todos los módulos; cada módulo tiene el mismo
 su propio `Makefile`.
 
 - Raíz: `make help` · `make build-all` · `make test-all` · `make lint-all` · `make ci-local` (fmt-check
-  + vet + lint + tests, lo que corre el CI; `make ci` es su alias) · `make ci-docker` (mismo pipeline
+  + vet + lint + tests + govulncheck, lo que corre el CI; `make ci` es su alias) · `make vuln`
+  (`govulncheck` en `GOVULNCHECK_VERSION` sobre cada módulo, con `GOWORK=off`; falla si hay una
+  vulnerabilidad alcanzable: con Dependabot apagado, plan 054 H.2, es el único control) · `make ci-docker` (mismo pipeline
   dentro del contenedor `golang:$(GO_VERSION)-bookworm` con el golangci-lint fijado, para reproducir el CI
   sin gastar minutos de Actions).
 - Por módulo: `make -C auth test` / `lint` / `fmt` / `vet` / `release-check`.
-- Toolchain fijado en **`versions.env`** (raíz del repo), la fuente única: hoy `GO_VERSION=1.27.4` y
-  `GOLANGCI_LINT_VERSION=2.14.0` (plan 054 de EduGo). El `Makefile` raíz hace `include versions.env` y
+- Toolchain fijado en **`versions.env`** (raíz del repo), la fuente única: hoy `GO_VERSION=1.27.4`,
+  `GOLANGCI_LINT_VERSION=2.14.0` y `GOVULNCHECK_VERSION=1.9.0` (plan 054 de EduGo). El `Makefile` raíz hace `include versions.env` y
   los workflows lo cargan en `$GITHUB_ENV` antes de `setup-go`; **ninguna versión se escribe a mano en un
   workflow**. La directiva `go` de cada `go.mod` debe coincidir con `GO_VERSION`. Los workflows corren
   con `GOWORK: 'off'`; los gates locales autoritativos, también (`GOWORK=off`).

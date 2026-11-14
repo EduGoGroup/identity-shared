@@ -112,6 +112,16 @@ vet-all: ## Ejecutar go vet en todos los modulos
 	done
 	@echo "$(GREEN)Todos los modulos pasaron go vet$(NC)"
 
+.PHONY: vuln
+vuln: ## Vulnerabilidades alcanzables con govulncheck v$(GOVULNCHECK_VERSION) en todos los modulos (falla si hay alguna)
+	@echo "$(BLUE)Ejecutando govulncheck v$(GOVULNCHECK_VERSION) en todos los modulos...$(NC)"
+	@for module in $(MODULES); do \
+		echo "$(YELLOW)govulncheck $$module...$(NC)"; \
+		(cd $$module && GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v$(GOVULNCHECK_VERSION) ./...) || exit 1; \
+		echo "$(GREEN)  $$module sin vulnerabilidades alcanzables$(NC)"; \
+	done
+	@echo "$(GREEN)Ningun modulo tiene vulnerabilidades alcanzables$(NC)"
+
 .PHONY: tidy-all
 tidy-all: ## Ejecutar go mod tidy en todos los modulos
 	@echo "$(BLUE)Ejecutando go mod tidy en todos los modulos...$(NC)"
@@ -133,7 +143,7 @@ tools: ## Instalar herramientas de CI (golangci-lint fijado a $(LINT_VERSION))
 	@echo "$(GREEN)Herramientas instaladas$(NC)"
 
 .PHONY: ci-local
-ci-local: fmt-check-all vet-all lint-all test-all ## Pre-push: fmt + vet + lint + tests con herramientas locales
+ci-local: fmt-check-all vet-all lint-all test-all vuln ## Pre-push: fmt + vet + lint + tests + govulncheck con herramientas locales
 	@echo "$(GREEN)CI local OK$(NC)"
 
 .PHONY: ci
@@ -153,7 +163,7 @@ ci-docker: ## Simula el CI en Docker (Go $(GO_VERSION) + golangci-lint $(LINT_VE
 		golang:$(GO_VERSION)-bookworm \
 		bash -c "set -e; \
 			curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/bin $(LINT_VERSION) && \
-			make fmt-check-all vet-all lint-all test-all" \
+			make fmt-check-all vet-all lint-all test-all vuln" \
 		2>&1
 	@echo "$(GREEN)CI Docker OK$(NC)"
 
