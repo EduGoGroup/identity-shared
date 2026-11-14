@@ -43,7 +43,8 @@ Los comandos habituales, desde la raíz:
 
 ```bash
 make help        # lista los targets disponibles
-make ci-local    # fmt-check + vet + lint + tests (lo mismo que corre el CI); `make ci` es su alias
+make ci-local    # fmt-check + vet + lint + tests + govulncheck (lo mismo que corre el CI); `make ci` es su alias
+make vuln        # govulncheck en cada módulo: falla si hay una vulnerabilidad alcanzable
 make ci-docker   # el mismo pipeline dentro del contenedor golang:$GO_VERSION, sin gastar Actions
 make test-all    # tests unitarios de todos los módulos
 ```
@@ -63,6 +64,7 @@ workflows la cargan en `$GITHUB_ENV`. Ninguna versión se escribe a mano en un w
 | --- | --- |
 | Go | `1.27.4` (`GO_VERSION`; `go 1.27.4` en cada `go.mod`) |
 | golangci-lint | `v2.14.0` (`GOLANGCI_LINT_VERSION`) |
+| govulncheck | `v1.9.0` (`GOVULNCHECK_VERSION`) |
 
 ## El Identity Token
 
