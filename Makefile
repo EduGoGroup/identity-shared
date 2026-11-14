@@ -3,9 +3,9 @@
 
 MODULE_NAME = github.com/EduGoGroup/identity-shared
 
-# Versiones fijadas del toolchain de CI (deben coincidir con .github/workflows/ci.yml)
-GO_VERSION   := 1.26.5
-LINT_VERSION := v2.12.2
+# Versiones fijadas del toolchain: la fuente unica es versions.env (la leen tambien los workflows)
+include versions.env
+LINT_VERSION := v$(GOLANGCI_LINT_VERSION)
 
 MODULES := $(shell ./scripts/list-modules.sh --set all | tr '\n' ' ')
 INTEGRATION_MODULES := $(shell ./scripts/list-modules.sh --set integration | tr '\n' ' ')
@@ -135,6 +135,9 @@ tools: ## Instalar herramientas de CI (golangci-lint fijado a $(LINT_VERSION))
 .PHONY: ci-local
 ci-local: fmt-check-all vet-all lint-all test-all ## Pre-push: fmt + vet + lint + tests con herramientas locales
 	@echo "$(GREEN)CI local OK$(NC)"
+
+.PHONY: ci
+ci: ci-local ## Alias de ci-local
 
 .PHONY: ci-docker
 ci-docker: ## Simula el CI en Docker (Go $(GO_VERSION) + golangci-lint $(LINT_VERSION)) — requiere Docker

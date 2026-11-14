@@ -5,6 +5,26 @@ y [Versionado Semantico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-14
+
+Solo toolchain y dependencias (plan 054 de EduGo, homologación de Go). No cambia una línea de código
+de este módulo, ni su API, ni su comportamiento.
+
+### Changed
+
+- **Go `1.26.5` → `1.27.4`** (directiva `go` del `go.mod`). El parche, no solo la minor: `govulncheck`
+  midió vulnerabilidades alcanzables en la librería estándar de `go1.27.1` (`net/http`, `crypto/tls`,
+  `crypto/x509`…) corregidas hasta `go1.27.4`. Los consumidores de esta versión necesitan Go `1.27.4`
+  o `GOTOOLCHAIN=auto`.
+- **`github.com/stretchr/testify` `v1.11.1` → `v1.12.1`** (solo tests). Al subir, `go mod tidy` cambia
+  las indirectas: salen `davecgh/go-spew`, `pmezard/go-difflib` y `gopkg.in/yaml.v3`, entra
+  `go.yaml.in/yaml/v3 v3.0.5`.
+
+### Security
+
+- **`golang.org/x/crypto` `v0.54.0` → `v0.59.0`**, la última publicada. `GOWORK=off govulncheck ./...`
+  con `go1.27.4`: **No vulnerabilities found**.
+
 ## [0.3.1] - 2026-08-02
 
 Parche de seguridad de dependencias. No cambia una línea de este módulo: sube `golang.org/x/crypto`
